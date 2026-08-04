@@ -8,8 +8,15 @@ Install a packaged skill explicitly:
 
 ```bash
 node skills/install.mjs codex handoff-review --force
-node skills/install.mjs opencode handoff-review --worktree /absolute/path/to/worktree --force
+node skills/install.mjs opencode handoff-review --force                 # global: ~/.config/opencode/skills
+node skills/install.mjs opencode handoff-review --worktree <path> --force  # per-worktree: <path>/.opencode
 ```
+
+OpenCode skills default to the global `~/.config/opencode/skills/` directory.
+Install there so every project and worktree has the skills — a bootstrap skill
+like `issue-kickoff` must exist globally, otherwise a fresh worktree has no
+skill to provision it (catch-22). `--worktree` targets a single checkout when
+you need a self-contained or versioned-pinned copy.
 
 The installer refuses to replace an existing installation unless `--force` is
 given. It copies the selected package into the destination, so updating TARS

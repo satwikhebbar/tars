@@ -13,6 +13,7 @@ async function main() {
     options: {
       worktree: { type: "string" },
       "codex-home": { type: "string" },
+      "opencode-home": { type: "string" },
       force: { type: "boolean", default: false },
     },
     allowPositionals: true,
@@ -29,8 +30,8 @@ async function main() {
 
 function destinationFor(agent, skill, values) {
   if (agent === "codex") return join(values["codex-home"] ?? join(homedir(), ".codex"), "skills", skill)
-  if (!values.worktree) throw new Error("OpenCode installation requires --worktree <path>")
-  return join(resolve(values.worktree), ".opencode", "skills", skill)
+  if (values.worktree) return join(resolve(values.worktree), ".opencode", "skills", skill)
+  return join(values["opencode-home"] ?? join(homedir(), ".config", "opencode"), "skills", skill)
 }
 
 async function install(source, destination, force) {
@@ -57,7 +58,8 @@ async function assertDirectory(path, message) {
 function usage() {
   console.log(`Usage:
   node skills/install.mjs codex <skill> [--codex-home <path>] [--force]
-  node skills/install.mjs opencode <skill> --worktree <path> [--force]`)
+  node skills/install.mjs opencode <skill> [--opencode-home <path>] [--force]  # global: ~/.config/opencode
+  node skills/install.mjs opencode <skill> --worktree <path> [--force]         # per-worktree: <path>/.opencode`)
 }
 
 await main().catch((error) => {
