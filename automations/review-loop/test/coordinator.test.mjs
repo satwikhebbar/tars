@@ -24,7 +24,7 @@ test("implementation response wakes only the registered Codex session once", asy
   fixture.state.close()
 })
 
-test("changes requested wakes OpenCode and approval terminates the lane", async () => {
+test("changes requested wakes OpenCode and approval tells OpenCode to push and open a PR", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
     fixture.worktree,
@@ -43,6 +43,12 @@ test("changes requested wakes OpenCode and approval terminates the lane", async 
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.deepEqual(
+    fixture.aoe.sent.map((entry) => entry.sessionId),
+    ["opencode-1", "opencode-1"],
+  )
+  assert.match(fixture.aoe.sent[1].message, /push the approved branch/i)
+  assert.match(fixture.aoe.sent[1].message, /create a pull request/i)
   fixture.state.close()
 })
 

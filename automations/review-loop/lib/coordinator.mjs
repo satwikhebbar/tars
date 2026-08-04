@@ -33,6 +33,11 @@ export class ReviewLoopCoordinator {
       }
       if (this.state.hasDispatched(lane.worktreePath, event.key)) continue
       if (event.destination === "terminal") {
+        if (event.outcome === "approved") {
+          const sessionId = lane.opencodeSessionId
+          if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
+          await this.aoe.send(sessionId, promptFor(event))
+        }
         this.state.markDispatched(lane.worktreePath, event.key)
         this.state.saveLane({ ...lane, state: event.outcome })
         results.push({ event, action: event.outcome })
@@ -105,6 +110,9 @@ function promptFor(event) {
   const path = event.handoff.path
   if (event.destination === "codex") {
     return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
+  }
+  if (event.destination === "terminal" && event.outcome === "approved") {
+    return `Review-loop: the handoff review is approved and complete. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not make implementation changes unless needed to resolve a push or PR blocker.`
   }
   return `Review-loop: read ${path}, apply the requested review changes, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, and head_commit. Do not request a manual handoff.`
 }

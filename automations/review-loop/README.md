@@ -44,4 +44,4 @@ round: 2
 outcome: changes_requested # approved | changes_requested | blocked
 ```
 
-An implementation response wakes only that lane's Codex session. `changes_requested` wakes only its OpenCode session. `approved`, `blocked`, or a round above the cap stops the lane. Events are journaled in SQLite after successful delivery, making scans idempotent across restarts.
+An implementation response wakes only that lane's Codex session. `changes_requested` wakes only its OpenCode session. On `approved`, the coordinator wakes OpenCode once to record the completed handoff, push the approved branch, and create a pull request; it then marks the lane approved. `blocked` or a round above the cap stops the lane. Events are journaled in SQLite after successful delivery, making scans idempotent across restarts.
