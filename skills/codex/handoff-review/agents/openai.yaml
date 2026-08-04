@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handoff Review"
+  short_description: "Review OpenCode work and create handoffs"
+  default_prompt: "Use $handoff-review to review the implementation response and write a code-review verdict into the repo handoff inbox."

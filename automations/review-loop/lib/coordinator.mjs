@@ -104,7 +104,7 @@ function compareEvents(left, right) {
 function promptFor(event) {
   const path = event.handoff.path
   if (event.destination === "codex") {
-    return `Review-loop: read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
+    return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
   }
   return `Review-loop: read ${path}, apply the requested review changes, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, and head_commit. Do not request a manual handoff.`
 }
