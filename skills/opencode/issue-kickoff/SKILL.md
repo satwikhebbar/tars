@@ -21,14 +21,26 @@ Initialize the assigned AoE worktree for a new issue and classify its type. TARS
 
 6. **Hooks** — `npx lefthook install`.
 
-7. **Classify** — bug (broken behavior), enhancement (improves existing), feature (new capability). Share summary with user.
+7. **Local dev files** — `wrangler.local.toml` and `.dev.vars` are gitignored, so
+   worktrees don't receive them and `pnpm dev` would fail. Copy them from the
+   primary checkout (first entry of `git worktree list`). Skip `wrangler.prod.toml`;
+   it is not needed for local dev. Both files stay untracked, so `git status` stays clean.
 
-8. **Print summary**:
+   ```bash
+   PRIMARY=$(git worktree list | awk 'NR==1 {print $1}')
+   cp -f "$PRIMARY/wrangler.local.toml" .
+   cp -f "$PRIMARY/.dev.vars" .
+   git status
+   ```
+
+8. **Classify** — bug (broken behavior), enhancement (improves existing), feature (new capability). Share summary with user.
+
+9. **Print summary**:
     ```
     Branch:   <branch>
     Worktree: <path>
     ```
 
-9. **Next step**:
+10. **Next step**:
     - Bug → implement the fix directly.
     - Enhancement/Feature → ask "Should I draft a plan?" If yes, create plan in `plans/` as HTML, then implement.
