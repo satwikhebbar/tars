@@ -1,42 +1,34 @@
 ---
 name: issue-kickoff
-description: Pick up a new GitHub issue and set up a local worktree. Use when the user says "start new issue", "pick this up", "let's work on issue X", or "new issue" with a GitHub issue URL.
+description: Initialize and begin work on a GitHub issue in an already-assigned worktree. Use when TARS or a user starts a new issue lane and asks OpenCode to pick it up, plan it, or implement it.
 ---
 
 # Issue Kickoff
 
-Set up a local worktree for a new issue and classify its type.
+Initialize the assigned AoE worktree for a new issue and classify its type. TARS/AoE owns branch and worktree creation.
 
 ## Workflow
 
 1. **Read the issue** — `rtk gh issue view <N> --repo <owner/repo>`.
 
-2. **Verify repo** — `pwd && git remote -v`. Confirm you're in the right checkout.
+2. **Verify assignment** — `pwd && git remote -v && git branch --show-current`. Confirm this is the assigned checkout and branch.
 
-3. **Branch name** — `<type>/<kebab-description>` where type is `fix` (bug), `feat` (new feature), or `enhance` (improvement to existing behavior).
+3. **Do not create or move worktrees** — retain the branch and worktree assigned by AoE/TARS. Report a mismatch rather than running `git worktree add` or changing branches.
 
-4. **Fetch** — `git fetch origin` to get latest remote state.
+4. **Fetch** — `git fetch origin` to get latest remote state when needed.
 
-5. **Worktree** — `git worktree add -b <branch> <path> origin/main` where path is `../<repo-name>--<branch>`.
+5. **Install deps** — `pnpm install` in the assigned worktree.
 
-6. **Install deps** — `pnpm install` in the new worktree.
+6. **Hooks** — `npx lefthook install`.
 
-7. **Hooks** — `npx lefthook install`.
+7. **Classify** — bug (broken behavior), enhancement (improves existing), feature (new capability). Share summary with user.
 
-8. **agmsg team** — replace `/` with `-` in branch name to get `<sanitized-name>`, then:
-   ```
-   bash ~/.agents/skills/agmsg/scripts/join.sh <sanitized-name> oc opencode "$(pwd)"
-   ```
-
-9. **Classify** — bug (broken behavior), enhancement (improves existing), feature (new capability). Share summary with user.
-
-10. **Print summary**:
+8. **Print summary**:
     ```
     Branch:   <branch>
     Worktree: <path>
-    agmsg:    <sanitized-name>
     ```
 
-11. **Next step**:
+9. **Next step**:
     - Bug → implement the fix directly.
     - Enhancement/Feature → ask "Should I draft a plan?" If yes, create plan in `plans/` as HTML, then implement.

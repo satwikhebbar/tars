@@ -1,6 +1,6 @@
 # Agent review loop
 
-`agent-review-loop` is a local coordinator for one OpenCode implementation session and one Codex review session per git worktree. It uses AoE only to send turns. The `.agent-handoff/` files are the durable workflow protocol; agmsg is optional and is not read by this tool.
+`agent-review-loop` is a local coordinator for one OpenCode implementation session and one Codex review session per git worktree. AoE sends turns, and `.agent-handoff/` files are the durable workflow protocol.
 
 ## Start a lane
 
@@ -19,6 +19,30 @@ node automations/review-loop/cli.mjs start \
 ```
 
 Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View registered lanes with `node automations/review-loop/cli.mjs status`.
+
+## Create and manage lanes
+
+For a new GitHub issue, let TARS ask OpenCode for a branch-name suggestion in a bounded, read-only preflight. TARS validates a single machine-readable directive, falls back to a deterministic name if necessary, and then lets AoE create the worktree and launch the one persistent OpenCode implementation session:
+
+```bash
+node automations/review-loop/cli.mjs lane start \
+  --repo /absolute/path/to/main-checkout \
+  --issue 44
+```
+
+The namer proposes both the branch and the AoE worktree name. Pass `--branch <name>` and, when needed, `--worktree-name <name>` to override them. The command prints the created worktree and both session IDs, then sends the implementation session its opening issue prompt. It does not start another polling loop.
+
+Run one watcher to serve every registered lane:
+
+```bash
+node automations/review-loop/cli.mjs watch
+```
+
+Register an existing worktree/session pair without creating a competing watcher:
+
+```bash
+node automations/review-loop/cli.mjs lane register --worktree /absolute/path/to/worktree
+```
 
 ## Protocol additions
 

@@ -5,7 +5,7 @@ import { isWorkflowHandoff, readHandoff } from "./handoff.mjs"
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 const ACTIVE_STATES = new Set(["idle", "waiting"])
 
-/** Coordinates one persisted AoE pair per worktree without relying on agmsg delivery. */
+/** Coordinates one persisted AoE pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
   constructor({ aoe, state }) {
     this.aoe = aoe

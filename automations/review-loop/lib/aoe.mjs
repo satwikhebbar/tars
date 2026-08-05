@@ -24,7 +24,41 @@ export class AoeClient {
   }
 
   async addSession(worktreePath, tool, title) {
-    await execFileAsync(this.command, ["add", worktreePath, "--tool", tool, "--title", title, "--launch"])
+    const before = await this.listSessions()
+    await execFileAsync(this.command, ["add", worktreePath, "--tool", tool, "--title", title])
+    const session = await this.findNewSession(before, tool)
+    await this.startSession(session.id)
+    return session
+  }
+
+  async createWorktreeSession(repoPath, branch, title) {
+    const before = await this.listSessions()
+    await execFileAsync(this.command, [
+      "add",
+      repoPath,
+      "--tool",
+      "opencode",
+      "--title",
+      title,
+      "--worktree",
+      branch,
+      "--new-branch",
+    ])
+    const session = await this.findNewSession(before, "opencode")
+    await this.startSession(session.id)
+    return session
+  }
+
+  async startSession(sessionId) {
+    await execFileAsync(this.command, ["session", "start", sessionId])
+  }
+
+  async findNewSession(before, tool) {
+    const priorIds = new Set(before.map((session) => session.id))
+    const created = (await this.listSessions()).filter((session) => session.tool === tool && !priorIds.has(session.id))
+    if (created.length !== 1)
+      throw new Error(`Expected one newly-created ${tool} AoE session; found ${created.length}.`)
+    return created[0]
   }
 }
 
