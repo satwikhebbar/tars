@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -51,6 +52,20 @@ export class AoeClient {
 
   async startSession(sessionId) {
     await execFileAsync(this.command, ["session", "start", sessionId])
+    await waitForSessionReady(this, sessionId)
+  }
+
+  async captureSession(sessionId) {
+    const { stdout } = await execFileAsync(this.command, [
+      "session",
+      "capture",
+      sessionId,
+      "--lines",
+      "20",
+      "--strip-ansi",
+      "--json",
+    ])
+    return JSON.parse(stdout)
   }
 
   async findNewSession(before, tool) {
@@ -60,6 +75,36 @@ export class AoeClient {
       throw new Error(`Expected one newly-created ${tool} AoE session; found ${created.length}.`)
     return created[0]
   }
+}
+
+/**
+ * Waits until AoE can read visible terminal content before sending an initial
+ * prompt. `aoe session start` returns as soon as tmux exists, which can be
+ * before an interactive agent has installed its input handler.
+ */
+export async function waitForSessionReady(client, sessionId, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 30_000
+  const pollIntervalMs = options.pollIntervalMs ?? 250
+  const sleep = options.sleep ?? delay
+  const startedAt = Date.now()
+  let lastError
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const capture = await client.captureSession(sessionId)
+      if (capture.content?.trim()) {
+        // Let the terminal UI finish installing its key handler after first paint.
+        await sleep(500)
+        return
+      }
+    } catch (error) {
+      lastError = error
+    }
+    await sleep(pollIntervalMs)
+  }
+
+  const detail = lastError instanceof Error ? ` (${lastError.message})` : ""
+  throw new Error(`AoE session ${sessionId} did not become ready within ${timeoutMs}ms${detail}`)
 }
 
 /** Locates exactly one OpenCode and Codex session associated with a worktree. */

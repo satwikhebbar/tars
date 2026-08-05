@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, validatePair } from "../lib/aoe.mjs"
+import { createPair, discoverPair, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
 
@@ -22,6 +22,16 @@ test("creates a pair only when discovery finds none", async () => {
   const pair = await createPair(client, WORKTREE)
   assert.deepEqual(pair, { opencodeSessionId: "new-open", codexSessionId: "new-codex" })
   assert.equal(client.added.length, 2)
+})
+
+test("waits for visible terminal content before treating a new session as ready", async () => {
+  const captures = [{ content: "" }, { content: "OpenCode is ready" }]
+  const waits = []
+  await waitForSessionReady({ captureSession: async () => captures.shift() }, "open-1", {
+    pollIntervalMs: 1,
+    sleep: async (milliseconds) => waits.push(milliseconds),
+  })
+  assert.deepEqual(waits, [1, 500])
 })
 
 function sessions() {

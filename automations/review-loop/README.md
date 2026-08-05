@@ -22,6 +22,10 @@ Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View register
 
 ## Create and manage lanes
 
+When a lane creates a new AoE session, TARS waits for the agent's terminal UI
+to be ready before sending its first prompt. This avoids losing that prompt
+during session startup.
+
 For a new GitHub issue, let TARS ask OpenCode for a branch-name suggestion in a bounded, read-only preflight. TARS validates a single machine-readable directive, falls back to a deterministic name if necessary, and then lets AoE create the worktree and launch the one persistent OpenCode implementation session:
 
 ```bash

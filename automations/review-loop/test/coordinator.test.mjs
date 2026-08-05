@@ -24,6 +24,22 @@ test("implementation response wakes only the registered Codex session once", asy
   fixture.state.close()
 })
 
+test("accepts a numeric issue number as the stable workflow ID", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: 45-response-1\ntype: implementation-response\nworkflow_id: 45\nround: 1\nhead_commit: abc123`,
+  )
+  const result = await fixture.coordinator.processAll()
+  assert.equal(result[0].action, "sent:codex")
+  assert.deepEqual(
+    fixture.aoe.sent.map((entry) => entry.sessionId),
+    ["codex-1"],
+  )
+  fixture.state.close()
+})
+
 test("changes requested wakes OpenCode and approval tells OpenCode to push and open a PR", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(

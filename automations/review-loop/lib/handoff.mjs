@@ -41,7 +41,11 @@ export function parseFrontmatter(source) {
 /** Returns only actionable, protocol-v2 handoffs. */
 export function isWorkflowHandoff(handoff) {
   const { metadata } = handoff
-  return typeof metadata.id === "string" && typeof metadata.workflow_id === "string" && Number.isInteger(metadata.round)
+  return (
+    typeof metadata.id === "string" &&
+    (typeof metadata.workflow_id === "string" || Number.isInteger(metadata.workflow_id)) &&
+    Number.isInteger(metadata.round)
+  )
 }
 
 function parseScalar(value) {
