@@ -21,6 +21,49 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   return { worktreePath, opencodeSessionId: opencode.id, codexSessionId: codex.id }
 }
 
+/**
+ * Retires an approved AoE lane. AoE owns its worktree lock, so the reviewer
+ * session is removed first and the implementation session performs the final
+ * worktree and branch deletion.
+ */
+export async function closeLane({ aoe, state, worktreePath }) {
+  const lane = state.lane(worktreePath)
+  if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
+  if (lane.state !== "approved") {
+    throw new Error(`Lane ${worktreePath} is ${lane.state}; only approved lanes can be closed.`)
+  }
+
+  const sessions = await aoe.listSessions()
+  const sessionsInWorktree = sessions.filter((session) => session.path === worktreePath)
+  const expectedIds = new Set([lane.opencodeSessionId, lane.codexSessionId])
+  const unexpected = sessionsInWorktree.filter((session) => !expectedIds.has(session.id))
+  if (unexpected.length) {
+    throw new Error(
+      `Refusing to close ${worktreePath}: it has unrelated AoE session(s): ${unexpected.map((s) => s.id).join(", ")}.`,
+    )
+  }
+
+  const opencode = sessions.find((session) => session.id === lane.opencodeSessionId)
+  const codex = sessions.find((session) => session.id === lane.codexSessionId)
+  if (opencode && (opencode.path !== worktreePath || opencode.tool !== "opencode")) {
+    throw new Error(`AoE session ${opencode.id} is no longer the registered OpenCode session for ${worktreePath}.`)
+  }
+  if (codex && (codex.path !== worktreePath || codex.tool !== "codex")) {
+    throw new Error(`AoE session ${codex.id} is no longer the registered Codex session for ${worktreePath}.`)
+  }
+  if (!opencode && !codex) {
+    throw new Error(
+      `Neither registered AoE session exists for ${worktreePath}; cannot safely release its worktree lock.`,
+    )
+  }
+
+  if (opencode && codex) await aoe.removeSession(codex.id)
+  const finalSession = opencode ?? codex
+  await aoe.removeSession(finalSession.id, { deleteWorktree: true, deleteBranch: true })
+  state.deleteLane(worktreePath)
+  return lane
+}
+
 export function issueOpeningPrompt(issue) {
   return `You are the implementation agent for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response.`
 }

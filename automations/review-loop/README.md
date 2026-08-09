@@ -48,6 +48,18 @@ Register an existing worktree/session pair without creating a competing watcher:
 node automations/review-loop/cli.mjs lane register --worktree /absolute/path/to/worktree
 ```
 
+After the approved branch has been merged and its issue closed, retire the lane
+through TARS rather than Git directly:
+
+```bash
+node automations/review-loop/cli.mjs lane close --worktree /absolute/path/to/worktree
+```
+
+This removes the Codex AoE session first, then has AoE remove the OpenCode
+session together with its managed worktree and local branch. It only accepts an
+`approved` registered lane, refuses a worktree shared with unrelated AoE
+sessions, and retains the lane record if AoE cannot complete cleanup.
+
 ## Protocol additions
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.

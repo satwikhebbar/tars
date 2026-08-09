@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
-import { issueOpeningPrompt, registerLane, startLane } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, registerLane, startLane } from "./lib/lane.mjs"
 import { chooseLaneName, fallbackLaneName } from "./lib/namer.mjs"
 import { StateStore } from "./lib/state.mjs"
 
@@ -42,6 +42,7 @@ async function main() {
     else if (command === "watch") await watch({ values, state })
     else if (command === "lane" && positionals[1] === "register") await register({ values, state })
     else if (command === "lane" && positionals[1] === "start") await launch({ values, state })
+    else if (command === "lane" && positionals[1] === "close") await close({ values, state })
     else if (command === "status") printStatus(state)
     else printUsage()
   } finally {
@@ -104,6 +105,13 @@ async function launch({ values, state }) {
   console.log(`started: ${lane.worktreePath}\t${lane.opencodeSessionId}\t${lane.codexSessionId}\t${names.branch}`)
 }
 
+async function close({ values, state }) {
+  if (!values.worktree) throw new Error("lane close requires --worktree <path>")
+  const worktreePath = await realpath(values.worktree)
+  await closeLane({ aoe: laneAoe(new AoeClient()), state, worktreePath })
+  console.log(`closed: ${worktreePath}`)
+}
+
 async function selectPair(aoe, worktreePath, values) {
   if (values.opencode && values.codex) return { opencodeSessionId: values.opencode, codexSessionId: values.codex }
   if (values.opencode || values.codex) throw new Error("Specify both --opencode and --codex, or neither.")
@@ -150,6 +158,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs watch [--once]
   node automations/review-loop/cli.mjs lane register --worktree <path> [--create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  node automations/review-loop/cli.mjs lane close --worktree <path>
   node automations/review-loop/cli.mjs status`)
 }
 
@@ -163,6 +172,8 @@ function laneAoe(client) {
     },
     addSession: (worktreePath, tool, title) => client.addSession(worktreePath, tool, title),
     send: (sessionId, message) => client.send(sessionId, message),
+    listSessions: () => client.listSessions(),
+    removeSession: (sessionId, options) => client.removeSession(sessionId, options),
   }
 }
 

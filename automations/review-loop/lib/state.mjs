@@ -65,6 +65,10 @@ export class StateStore {
     return this.database.prepare("SELECT * FROM lanes ORDER BY worktree_path").all().map(toLane)
   }
 
+  deleteLane(worktreePath) {
+    this.database.prepare("DELETE FROM lanes WHERE worktree_path = ?").run(worktreePath)
+  }
+
   hasDispatched(worktreePath, eventKey) {
     return Boolean(
       this.database

@@ -24,6 +24,13 @@ export class AoeClient {
     await execFileAsync(this.command, ["send", sessionId, message])
   }
 
+  async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false } = {}) {
+    const args = ["remove", sessionId]
+    if (deleteWorktree) args.push("--delete-worktree")
+    if (deleteBranch) args.push("--delete-branch")
+    await execFileAsync(this.command, args)
+  }
+
   async addSession(worktreePath, tool, title) {
     const before = await this.listSessions()
     await execFileAsync(this.command, ["add", worktreePath, "--tool", tool, "--title", title])

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { issueOpeningPrompt, startLane } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, startLane } from "../lib/lane.mjs"
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
   const aoe = new FakeAoe()
@@ -27,11 +27,60 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(state.lanes[0].codexSessionId, "codex-44")
 })
 
+test("closes an approved lane through AoE before deleting its worktree", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo--issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "approved",
+    maxRounds: 5,
+  })
+  aoe.sessions = [
+    { id: "open-44", path: worktreePath, tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+  ]
+
+  await closeLane({ aoe, state, worktreePath })
+
+  assert.deepEqual(aoe.removed, [
+    ["codex-44", {}],
+    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+  ])
+  assert.equal(state.lane(worktreePath), null)
+})
+
+test("refuses to close a non-approved or shared lane", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo--issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "watching",
+    maxRounds: 5,
+  })
+  await assert.rejects(closeLane({ aoe, state, worktreePath }), /only approved lanes/)
+
+  state.lanes[0].state = "approved"
+  aoe.sessions = [
+    { id: "open-44", path: worktreePath, tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+    { id: "other", path: worktreePath, tool: "opencode" },
+  ]
+  await assert.rejects(closeLane({ aoe, state, worktreePath }), /unrelated AoE session/)
+})
+
 class FakeAoe {
   constructor() {
     this.added = []
     this.sent = []
     this.titles = []
+    this.sessions = []
+    this.removed = []
   }
 
   async findOrCreateWorktreeSession(repoPath, branch, title) {
@@ -48,6 +97,14 @@ class FakeAoe {
   async send(sessionId, message) {
     this.sent.push({ sessionId, message })
   }
+
+  async listSessions() {
+    return this.sessions
+  }
+
+  async removeSession(sessionId, options = {}) {
+    this.removed.push([sessionId, options])
+  }
 }
 
 class FakeState {
@@ -57,5 +114,13 @@ class FakeState {
 
   saveLane(lane) {
     this.lanes.push(lane)
+  }
+
+  lane(worktreePath) {
+    return this.lanes.find((lane) => lane.worktreePath === worktreePath) ?? null
+  }
+
+  deleteLane(worktreePath) {
+    this.lanes = this.lanes.filter((lane) => lane.worktreePath !== worktreePath)
   }
 }
