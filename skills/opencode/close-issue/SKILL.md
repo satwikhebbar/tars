@@ -23,13 +23,7 @@ description: Close a GitHub issue after implementation. Use when the user says "
 
 8. Post the draft from step 6 as a comment. If the PR body contained `Closes #<N>` (auto-closes on merge): `rtk gh issue comment <N> --repo <owner/repo> --body "..."`. Otherwise: `rtk gh issue close <N> --repo <owner/repo> --comment "..."`. A comment is always posted regardless of auto-close status.
 
-9. Clean up a TARS-managed AoE lane only after the PR is merged and issue closed. First check for uncommitted tracked changes — `rtk git -C <worktree-path> status --porcelain`. If any tracked files are modified/staged, abort and alert the user. Otherwise invoke TARS:
-
-   ```bash
-   node "${TARS_HOME:?Set TARS_HOME to the TARS checkout}/automations/review-loop/cli.mjs" lane close --worktree <worktree-path>
-   ```
-
-   `lane close` retires the paired AoE sessions in the required order, releases AoE's worktree lock, removes the managed worktree and local branch, and clears TARS's lane record. Do not run `git worktree remove`, `git branch -D`, `aoe remove`, or a second `--force` yourself for a registered lane. If TARS rejects cleanup or AoE reports a dirty worktree, stop and report the error.
+9. Stop after the closing comment is posted. Do not clean up the worktree, delete the branch, or close the lane — worktree, branch, and TARS/AoE lane lifecycle are owned by the user or the lane coordinator.
 
 ## Rules
 
