@@ -20,6 +20,13 @@ export class AoeClient {
     return JSON.parse(stdout)
   }
 
+  async runtimeSessions({ includeDead = false } = {}) {
+    const args = ["ps", "--json"]
+    if (includeDead) args.push("--dead")
+    const { stdout } = await execFileAsync(this.command, args)
+    return JSON.parse(stdout)
+  }
+
   async send(sessionId, message) {
     await execFileAsync(this.command, ["send", sessionId, message])
   }

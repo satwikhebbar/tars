@@ -60,6 +60,17 @@ session together with its managed worktree and local branch. It only accepts an
 `approved` registered lane, refuses a worktree shared with unrelated AoE
 sessions, and retains the lane record if AoE cannot complete cleanup.
 
+To abort a lane before approval, first stop both its OpenCode and Codex AoE
+sessions. Once AoE reports both tmux panes as dead, use the explicit override:
+
+```bash
+node automations/review-loop/cli.mjs lane close --worktree /absolute/path/to/worktree --force
+```
+
+`--force` does not terminate agents. It only permits a non-approved cleanup
+after verifying that both registered session panes are already dead (and makes
+the same verification for an approved lane when supplied).
+
 ## Protocol additions
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.

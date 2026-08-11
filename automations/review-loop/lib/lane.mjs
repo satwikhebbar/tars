@@ -26,10 +26,10 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
  * session is removed first and the implementation session performs the final
  * worktree and branch deletion.
  */
-export async function closeLane({ aoe, state, worktreePath }) {
+export async function closeLane({ aoe, state, worktreePath, force = false }) {
   const lane = state.lane(worktreePath)
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
-  if (lane.state !== "approved") {
+  if (lane.state !== "approved" && !force) {
     throw new Error(`Lane ${worktreePath} is ${lane.state}; only approved lanes can be closed.`)
   }
 
@@ -57,11 +57,33 @@ export async function closeLane({ aoe, state, worktreePath }) {
     )
   }
 
+  if (force) {
+    await assertStoppedDeadSessions(aoe, [lane.opencodeSessionId, lane.codexSessionId])
+  }
+
   if (opencode && codex) await aoe.removeSession(codex.id)
   const finalSession = opencode ?? codex
   await aoe.removeSession(finalSession.id, { deleteWorktree: true, deleteBranch: true })
   state.deleteLane(worktreePath)
   return lane
+}
+
+/**
+ * An aborted lane is allowed to delete a non-approved worktree only after the
+ * user has stopped both agents. Requiring AoE's dead tmux records prevents a
+ * cleanup command from terminating or discarding work under a live pane.
+ */
+async function assertStoppedDeadSessions(aoe, sessionIds) {
+  const runtimeSessions = await aoe.runtimeSessions({ includeDead: true })
+  const liveOrMissing = sessionIds.filter((sessionId) => {
+    const runtime = runtimeSessions.find((entry) => entry.session === sessionId)
+    return runtime?.substrate !== "tmux" || runtime.state !== "dead"
+  })
+  if (liveOrMissing.length) {
+    throw new Error(
+      `Refusing forced close: stop both registered AoE sessions first and confirm their panes are dead. Not dead: ${liveOrMissing.join(", ")}.`,
+    )
+  }
 }
 
 export function issueOpeningPrompt(issue) {

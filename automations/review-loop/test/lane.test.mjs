@@ -74,6 +74,38 @@ test("refuses to close a non-approved or shared lane", async () => {
   await assert.rejects(closeLane({ aoe, state, worktreePath }), /unrelated AoE session/)
 })
 
+test("force-closes a stopped non-approved lane, but never a live one", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo--issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "watching",
+    maxRounds: 5,
+  })
+  aoe.sessions = [
+    { id: "open-44", path: worktreePath, tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+  ]
+
+  aoe.runtime = [
+    { session: "open-44", substrate: "tmux", state: "running" },
+    { session: "codex-44", substrate: "tmux", state: "dead" },
+  ]
+  await assert.rejects(closeLane({ aoe, state, worktreePath, force: true }), /Not dead: open-44/)
+  assert.equal(state.lane(worktreePath)?.state, "watching")
+
+  aoe.runtime[0].state = "dead"
+  await closeLane({ aoe, state, worktreePath, force: true })
+  assert.deepEqual(aoe.removed, [
+    ["codex-44", {}],
+    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+  ])
+  assert.equal(state.lane(worktreePath), null)
+})
+
 class FakeAoe {
   constructor() {
     this.added = []
@@ -81,6 +113,7 @@ class FakeAoe {
     this.titles = []
     this.sessions = []
     this.removed = []
+    this.runtime = []
   }
 
   async findOrCreateWorktreeSession(repoPath, branch, title) {
@@ -100,6 +133,10 @@ class FakeAoe {
 
   async listSessions() {
     return this.sessions
+  }
+
+  async runtimeSessions() {
+    return this.runtime
   }
 
   async removeSession(sessionId, options = {}) {
