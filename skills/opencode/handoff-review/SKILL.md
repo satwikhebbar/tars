@@ -1,26 +1,33 @@
 ---
 name: handoff-review
 description: >
-  Publish and consume file-based review handoffs in .agent-handoff/. After
-  implementation and commit, writes an implementation-response to inbox/ to wake
-  the matching Codex review session; consumes Codex code-review handoffs through
-  an inbox → in-progress → done/archive pipeline, iterating fix rounds until
-  approved. Reads YAML frontmatter for id, workflow_id, round, head_commit,
-  target files, requested changes, and acceptance criteria.
+  Publish and consume file-based review handoffs in .agent-handoff/. Publishes
+  plan-review handoffs to wake Codex before implementation, and after
+  implementation and commit writes an implementation-response to inbox/ to wake
+  the matching Codex review session; consumes Codex plan/code-review handoffs
+  through an inbox → in-progress → done/archive pipeline, iterating fix rounds
+  until approved. Reads YAML frontmatter for id, workflow_id, round,
+  head_commit, target files, requested changes, and acceptance criteria.
 license: MIT
 ---
 
 # Agent Handoff
 
-This repo uses `.agent-handoff/` as a file-based queue for review feedback between agents. OpenCode implements and publishes responses; Codex reviews and returns handoffs. The queue connects the two.
+This repo uses `.agent-handoff/` as a file-based queue for review feedback between agents. OpenCode implements and publishes responses; Codex reviews and returns handoffs. The queue connects the two. **Each lane worktree has its own queue at its own `.agent-handoff/` root — always publish into the current lane worktree's `.agent-handoff/`, never the primary checkout.**
 
 ## Review Loop
 
 ```text
-implement → commit → publish implementation-response to inbox/   (wakes Codex)
+plan draft → publish plan-review to worktree inbox/ (wakes Codex)
                               │
                               ▼
-Codex writes code-review handoff to inbox/   (outcome: changes_requested | approved)
+Codex writes plan-review handoff to worktree inbox/ (approved | changes_requested)
+                              │
+                              ▼
+implement → commit → publish implementation-response to worktree inbox/ (wakes Codex)
+                              │
+                              ▼
+Codex writes code-review handoff to worktree inbox/   (outcome: changes_requested | approved)
                               │
                               ▼
 OpenCode claims handoff → applies changes → commits → publishes next
@@ -31,16 +38,84 @@ implementation-response (round+1) ─────────► back to Codex u
 
 | Path | Purpose |
 |------|---------|
-| `.agent-handoff/inbox/` | New handoff files waiting to be processed, plus `implementation-response` files OpenCode publishes to wake Codex |
+| `.agent-handoff/inbox/` | New handoff files waiting to be processed, plus `plan-review` / `implementation-response` files OpenCode publishes to wake Codex |
 | `.agent-handoff/in-progress/` | Files claimed by the implementation agent |
 | `.agent-handoff/done/` | Result files written after work is applied |
 | `.agent-handoff/archive/` | Processed original handoff files kept for audit history |
 
-Queue contents are gitignored, except `.gitkeep` files and `.agent-handoff/README.md`.
+Queue contents are gitignored, except `.gitkeep` files and `.agent-handoff/README.md`. The queue lives at the **worktree root** of the lane you are working in — do not publish to the primary checkout's `.agent-handoff/`.
+
+## Publish Plan Review
+
+Before starting implementation on a feature/enhancement, publish a `plan-review` handoff to wake the matching Codex review session so the plan is reviewed first.
+
+### When to publish
+
+- After drafting the plan file under `plans/` and before implementing.
+- On fix rounds, after consuming a Codex `plan-review` handoff with `outcome: changes_requested`, applying changes, and committing them.
+
+Do **not** publish for a plan that is not yet written to a file, or for a blocked task.
+
+### File
+
+Write `.agent-handoff/inbox/<id>.md` in the current lane worktree (e.g. `<workflow-id>-plan-review-<round>.md`). The `.agent-handoff/` tree is gitignored — list or check it with `bash ls`, never glob.
+
+### Frontmatter
+
+All coordinator-required fields must be present:
+
+```markdown
+---
+id: <workflow-id>-plan-review-<round>
+type: plan-review
+status: ready
+created_by: opencode
+workflow_id: <lane's issue number>
+round: <integer, starting at 1>
+target:
+  - plans/<plan-file>
+priority: normal
+cleanup: archive
+---
+```
+
+Field rules:
+
+- `workflow_id` — the lane's GitHub issue number (e.g. `53`). **Keep it identical across all review rounds for one task.**
+- `id` — unique per round, e.g. `53-plan-review-1`, `53-plan-review-2`.
+- `round` — integer, starting at `1`, incremented by 1 each fix round.
+
+### Body
+
+After the frontmatter:
+
+```markdown
+## Summary
+
+Short note on what this round delivers and its status.
+
+## What to Review
+
+- Concrete area of the plan to review.
+- Another concrete area.
+
+## Questions for Codex
+
+1. Anything ambiguous or under-specified?
+2. Specific design choices to validate.
+
+## Acceptance Criteria
+
+- Observable condition that proves the review happened.
+
+## Context
+
+- Issue URL, related plans, and any constraints.
+```
 
 ## Publish Implementation for Review
 
-After OpenCode finishes implementation and creates a commit, **publish an `implementation-response` to `.agent-handoff/inbox/` before reporting completion.** This is the signal TARS uses to wake the matching Codex review session.
+After OpenCode finishes implementation and creates a commit, **publish an `implementation-response` to the current lane worktree's `.agent-handoff/inbox/` before reporting completion.** This is the signal TARS uses to wake the matching Codex review session. Never publish to the primary checkout.
 
 ### When to publish
 
@@ -58,7 +133,7 @@ For those, use a blocked result/handoff instead (see [Result Shape](#result-shap
 
 ### File
 
-Write `.agent-handoff/inbox/<id>.response.md`, using the `id` value from the frontmatter as the filename. The `.agent-handoff/` tree is gitignored — list or check it with `bash ls`, never glob.
+Write `.agent-handoff/inbox/<id>.response.md`, using the `id` value from the frontmatter as the filename. The `.agent-handoff/` tree is gitignored — list or check it with `bash ls`, never glob. Write it in the **current lane worktree**, never the primary checkout.
 
 ### Frontmatter
 
@@ -113,7 +188,7 @@ Short note on what this round delivers and its status.
 
 ## Consuming Codex Review Handoffs
 
-1. **List inbox files using `bash` (NOT `glob`):** run `bash ls -la .agent-handoff/inbox/`. The `.agent-handoff/` tree is gitignored, so glob tools will silently find nothing — you must use bash.
+1. **List inbox files using `bash` (NOT `glob`):** run `bash ls -la .agent-handoff/inbox/` in the **current lane worktree** (never the primary checkout). The `.agent-handoff/` tree is gitignored, so glob tools will silently find nothing — you must use bash.
 2. Claim one by moving it to `.agent-handoff/in-progress/` via `bash mv`.
 3. Read the YAML frontmatter and requested changes.
 4. Apply the requested changes to the target files.
@@ -183,12 +258,14 @@ Write the `done/` result file **before** moving/archiving the original handoff.
 
 ## Fix Rounds
 
-When a consumed handoff is a `code-review` with `outcome: changes_requested`:
+When a consumed handoff has `outcome: changes_requested` (plan-review or code-review):
 
 1. Apply the requested changes and verify the acceptance criteria.
 2. Commit the changes (`git rev-parse HEAD` after committing gives the new `head_commit`).
-3. Increment `round` by 1 from the previous `implementation-response`.
-4. Publish a new `implementation-response` to `.agent-handoff/inbox/` with the same `workflow_id`, a new unique `id`, and the new `head_commit`.
+3. Increment `round` by 1 from the previous published handoff.
+4. Publish the next wake signal to the **current lane worktree's** `.agent-handoff/inbox/`:
+   - plan-review fix round → a new `plan-review` handoff (same `workflow_id`, new `id`, `round+1`);
+   - code-review fix round → a new `implementation-response` (same `workflow_id`, new `id`, `round+1`, new `head_commit`).
 5. Leave the original handoff and its result file in `done/`/`archive/` as the record of the consumed round.
 
 Do **not** bump the round or publish a new response when the review is `approved` — that is the terminal state.
@@ -196,6 +273,7 @@ Do **not** bump the round or publish a new response when the review is `approved
 ## Behavior Rules
 
 - Handoff files in `.agent-handoff/*/` are gitignored. Use `bash find` or direct file paths — glob tools respect `.gitignore` and will not find them.
+- **Always publish into the current lane worktree's `.agent-handoff/inbox/`, never the primary checkout's `.agent-handoff/`.**
 - Process one handoff at a time per session.
 - Treat `Requested Changes` as the work queue.
 - Treat `Acceptance Criteria` as the definition of done.
