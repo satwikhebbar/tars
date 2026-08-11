@@ -69,6 +69,25 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
 }
 
 /**
+ * Resolves the lane created for a GitHub issue without guessing from the
+ * filesystem. Only TARS's `issue-<number>-<slug>` worktree convention is
+ * eligible, and more than one eligible registered lane is an error.
+ */
+export function worktreeForIssue(state, issueNumber) {
+  const worktreeName = new RegExp(`^issue-${issueNumber}-[a-z0-9]+(?:-[a-z0-9]+)*$`)
+  const matches = state.lanes().filter((lane) => worktreeName.test(lane.worktreePath.split("/").at(-1)))
+  if (matches.length === 1) return matches[0].worktreePath
+  if (matches.length === 0) {
+    throw new Error(
+      `No registered lane with a worktree named issue-${issueNumber}-<slug>. Use lane close --worktree <path> instead.`,
+    )
+  }
+  throw new Error(
+    `Found ${matches.length} registered lanes with a worktree named issue-${issueNumber}-<slug>. Use lane close --worktree <path> instead.`,
+  )
+}
+
+/**
  * An aborted lane is allowed to delete a non-approved worktree only after the
  * user has stopped both agents. Requiring AoE's dead tmux records prevents a
  * cleanup command from terminating or discarding work under a live pane.

@@ -55,6 +55,16 @@ through TARS rather than Git directly:
 node automations/review-loop/cli.mjs lane close --worktree /absolute/path/to/worktree
 ```
 
+For lanes created with `lane start`, you can use the issue number instead:
+
+```bash
+node automations/review-loop/cli.mjs lane close --issue 44
+```
+
+TARS resolves only one registered worktree matching its `issue-44-<slug>`
+naming convention. If none or more than one match, it fails and requires the
+explicit `--worktree` path instead.
+
 This removes the Codex AoE session first, then has AoE remove the OpenCode
 session together with its managed worktree and local branch. It only accepts an
 `approved` registered lane, refuses a worktree shared with unrelated AoE
@@ -64,7 +74,7 @@ To abort a lane before approval, first stop both its OpenCode and Codex AoE
 sessions. Once AoE reports both tmux panes as dead, use the explicit override:
 
 ```bash
-node automations/review-loop/cli.mjs lane close --worktree /absolute/path/to/worktree --force
+node automations/review-loop/cli.mjs lane close --issue 44 --force
 ```
 
 `--force` does not terminate agents. It only permits a non-approved cleanup

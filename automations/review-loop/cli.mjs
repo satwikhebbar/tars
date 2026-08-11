@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
-import { closeLane, issueOpeningPrompt, registerLane, startLane } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLaneName, fallbackLaneName } from "./lib/namer.mjs"
 import { StateStore } from "./lib/state.mjs"
 
@@ -107,8 +107,11 @@ async function launch({ values, state }) {
 }
 
 async function close({ values, state }) {
-  if (!values.worktree) throw new Error("lane close requires --worktree <path>")
-  const worktreePath = await realpath(values.worktree)
+  if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
+  if (!values.worktree && !values.issue) throw new Error("lane close requires --worktree <path> or --issue <number>")
+  const worktreePath = values.worktree
+    ? await realpath(values.worktree)
+    : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
   await closeLane({ aoe: laneAoe(new AoeClient()), state, worktreePath, force: values.force })
   console.log(`closed: ${worktreePath}`)
 }
@@ -159,7 +162,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs watch [--once]
   node automations/review-loop/cli.mjs lane register --worktree <path> [--create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--branch <name>] [--worktree-name <name>] [--prompt <text>]
-  node automations/review-loop/cli.mjs lane close --worktree <path> [--force]
+  node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
   node automations/review-loop/cli.mjs status`)
 }
 

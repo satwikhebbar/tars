@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { closeLane, issueOpeningPrompt, startLane } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
   const aoe = new FakeAoe()
@@ -24,7 +24,7 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(aoe.sent[0].sessionId, "open-44")
   assert.equal(aoe.titles[0], "issue-44-add-calendar-export")
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
-  assert.equal(state.lanes[0].codexSessionId, "codex-44")
+  assert.equal(state.entries[0].codexSessionId, "codex-44")
 })
 
 test("closes an approved lane through AoE before deleting its worktree", async () => {
@@ -65,7 +65,7 @@ test("refuses to close a non-approved or shared lane", async () => {
   })
   await assert.rejects(closeLane({ aoe, state, worktreePath }), /only approved lanes/)
 
-  state.lanes[0].state = "approved"
+  state.entries[0].state = "approved"
   aoe.sessions = [
     { id: "open-44", path: worktreePath, tool: "opencode" },
     { id: "codex-44", path: worktreePath, tool: "codex" },
@@ -104,6 +104,36 @@ test("force-closes a stopped non-approved lane, but never a live one", async () 
     ["open-44", { deleteWorktree: true, deleteBranch: true }],
   ])
   assert.equal(state.lane(worktreePath), null)
+})
+
+test("resolves exactly one conventionally named issue lane", () => {
+  const state = new FakeState()
+  state.saveLane({
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "watching",
+    maxRounds: 5,
+  })
+  state.saveLane({
+    worktreePath: "/repo-worktrees/feature-44-other-work",
+    opencodeSessionId: "open-other",
+    codexSessionId: "codex-other",
+    state: "watching",
+    maxRounds: 5,
+  })
+
+  assert.equal(worktreeForIssue(state, 44), "/repo-worktrees/issue-44-add-calendar-export")
+  assert.throws(() => worktreeForIssue(state, 45), /No registered lane/)
+
+  state.saveLane({
+    worktreePath: "/other-worktrees/issue-44-another-copy",
+    opencodeSessionId: "open-duplicate",
+    codexSessionId: "codex-duplicate",
+    state: "watching",
+    maxRounds: 5,
+  })
+  assert.throws(() => worktreeForIssue(state, 44), /Found 2 registered lanes/)
 })
 
 class FakeAoe {
@@ -146,18 +176,22 @@ class FakeAoe {
 
 class FakeState {
   constructor() {
-    this.lanes = []
+    this.entries = []
   }
 
   saveLane(lane) {
-    this.lanes.push(lane)
+    this.entries.push(lane)
   }
 
   lane(worktreePath) {
-    return this.lanes.find((lane) => lane.worktreePath === worktreePath) ?? null
+    return this.entries.find((lane) => lane.worktreePath === worktreePath) ?? null
+  }
+
+  lanes() {
+    return this.entries
   }
 
   deleteLane(worktreePath) {
-    this.lanes = this.lanes.filter((lane) => lane.worktreePath !== worktreePath)
+    this.entries = this.entries.filter((lane) => lane.worktreePath !== worktreePath)
   }
 }
