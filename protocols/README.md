@@ -12,14 +12,20 @@ TARS treats `.agent-handoff/` as the durable event log:
    worktree with `id`, `workflow_id`, and integer `round`. Codex returns
    `plan-review-verdict` with the same correlation fields and `responds_to`.
    `changes_requested` wakes OpenCode to revise the plan; `approved` wakes it
-   to implement. A plan approval is not a terminal lane state.
-2. OpenCode commits and writes `implementation-response` with `id`,
+   to implement. An approved verdict carries `iteration_count` and a numbered
+   schedule of independently reviewable implementation iterations. A plan
+   approval is not a terminal lane state.
+2. TARS starts one scheduled iteration at a time. OpenCode commits and writes
+   `implementation-response` with `id`,
    `workflow_id` (a stable string or integer issue ID), integer `round`, and
-   immutable `head_commit`.
+   immutable `head_commit`; scheduled lanes also carry integer `iteration`.
 3. The coordinator wakes the matching Codex session.
-4. Codex writes `code-review` with the same `workflow_id` and `round`, plus
-   `outcome: approved`, `changes_requested`, or `blocked`.
+4. Codex writes `code-review` with the same `workflow_id`, `round`, and
+   `iteration` when present, plus `outcome: approved`, `changes_requested`,
+   or `blocked`.
 5. Only `changes_requested` wakes OpenCode. Its next committed response uses
-   the next round. `approved` and `blocked` are terminal.
+   the next round in the same iteration. An approved non-final iteration wakes
+   OpenCode for the next iteration; only final approval and `blocked` are
+   terminal.
 
 Queue state, AoE session IDs, and handoff contents stay outside TARS.
