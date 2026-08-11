@@ -85,6 +85,25 @@ the same verification for an approved lane when supplied).
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.
 
+Before implementation, OpenCode can request a plan review from the lane worktree:
+
+```yaml
+id: 53-plan-review-1
+type: plan-review
+created_by: opencode
+workflow_id: 53
+round: 1
+target:
+  - plans/the-plan.html
+```
+
+Codex replies in that same worktree with `type: plan-review-verdict`, the same
+`workflow_id` and `round`, `responds_to` set to the request id, and an
+`approved`, `changes_requested`, or `blocked` outcome. Plan approval wakes
+OpenCode to implement; it is not a terminal lane approval and never creates a
+pull request. Plan changes requested wake OpenCode to revise and republish the
+plan at the next round.
+
 OpenCode writes an `implementation-response` after committing:
 
 ```yaml

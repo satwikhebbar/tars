@@ -40,6 +40,30 @@ test("accepts a numeric issue number as the stable workflow ID", async () => {
   fixture.state.close()
 })
 
+test("plan review wakes Codex, then its verdict wakes OpenCode without approving the lane", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/plan.md",
+    `id: 53-plan-review-1\ntype: plan-review\ncreated_by: opencode\nworkflow_id: 53\nround: 1`,
+  )
+  await fixture.coordinator.processAll()
+  assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1"])
+  assert.match(fixture.aoe.sent[0].message, /plan-review-verdict/)
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/plan-verdict.md",
+    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\nresponds_to: 53-plan-review-1`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
+  assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1", "opencode-1"])
+  assert.match(fixture.aoe.sent[1].message, /begin implementation/i)
+  assert.doesNotMatch(fixture.aoe.sent[1].message, /push the approved branch/i)
+  fixture.state.close()
+})
+
 test("changes requested wakes OpenCode and approval tells OpenCode to push and open a PR", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(

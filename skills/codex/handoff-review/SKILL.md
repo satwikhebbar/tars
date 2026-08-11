@@ -20,9 +20,17 @@ Do not move files into `in-progress/`, `done/`, or `archive/` yourself unless th
 
 ## TARS Review-Loop Requests
 
-When an AoE/TARS coordinator asks for a review, it supplies the path to an
-`implementation-response` and its immutable `head_commit`. Read that handoff,
-review exactly that commit, and do not edit implementation files.
+When an AoE/TARS coordinator asks for a plan review, it supplies the path to a
+`plan-review` handoff. Read that handoff and its target plan artifact. Write
+exactly one `plan-review-verdict` handoff to the current lane worktree's
+`.agent-handoff/inbox/`; copy `workflow_id` and `round`, set `responds_to` to
+the request `id`, and set `outcome` to exactly one of `approved`,
+`changes_requested`, or `blocked`. Do not implement the plan or edit
+implementation files.
+
+When an AoE/TARS coordinator asks for a code review, it supplies the path to
+an `implementation-response` and its immutable `head_commit`. Read that
+handoff, review exactly that commit, and do not edit implementation files.
 
 Write exactly one `code-review` handoff to `.agent-handoff/inbox/`. Copy
 `workflow_id` and `round` unchanged from the implementation response, set
@@ -136,7 +144,7 @@ One short paragraph explaining the review outcome.
 Optional notes, links, or source references that help the implementation agent avoid rediscovery.
 ```
 
-For a TARS review-loop verdict, use this frontmatter instead of the generic
+For a TARS code-review verdict, use this frontmatter instead of the generic
 example above:
 
 ```markdown
@@ -156,9 +164,29 @@ cleanup: archive
 ---
 ```
 
+For a TARS plan-review verdict, use:
+
+```markdown
+---
+id: YYYY-MM-DD-short-topic-plan-verdict
+type: plan-review-verdict
+status: ready
+created_by: codex
+workflow_id: stable-workflow-id
+round: 1
+outcome: changes_requested # approved | changes_requested | blocked
+responds_to: plan-review-request-id
+target:
+  - plans/the-plan.html
+priority: normal
+cleanup: archive
+---
+```
+
 Valid `type` values:
 
 - `plan-review`
+- `plan-review-verdict`
 - `code-review`
 - `implementation-feedback`
 - `follow-up`
@@ -244,4 +272,3 @@ Add these ignore rules if absent:
 !.agent-handoff/done/.gitkeep
 !.agent-handoff/archive/.gitkeep
 ```
-

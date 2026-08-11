@@ -21,7 +21,7 @@ This repo uses `.agent-handoff/` as a file-based queue for review feedback betwe
 plan draft → publish plan-review to worktree inbox/ (wakes Codex)
                               │
                               ▼
-Codex writes plan-review handoff to worktree inbox/ (approved | changes_requested)
+Codex writes plan-review-verdict to worktree inbox/ (approved | changes_requested)
                               │
                               ▼
 implement → commit → publish implementation-response to worktree inbox/ (wakes Codex)
@@ -52,7 +52,7 @@ Before starting implementation on a feature/enhancement, publish a `plan-review`
 ### When to publish
 
 - After drafting the plan file under `plans/` and before implementing.
-- On fix rounds, after consuming a Codex `plan-review` handoff with `outcome: changes_requested`, applying changes, and committing them.
+- On fix rounds, after consuming a Codex `plan-review-verdict` handoff with `outcome: changes_requested`, applying changes, and committing them.
 
 Do **not** publish for a plan that is not yet written to a file, or for a blocked task.
 
@@ -72,6 +72,7 @@ status: ready
 created_by: opencode
 workflow_id: <lane's issue number>
 round: <integer, starting at 1>
+head_commit: <full git commit SHA containing the plan>
 target:
   - plans/<plan-file>
 priority: normal
@@ -84,6 +85,7 @@ Field rules:
 - `workflow_id` — the lane's GitHub issue number (e.g. `53`). **Keep it identical across all review rounds for one task.**
 - `id` — unique per round, e.g. `53-plan-review-1`, `53-plan-review-2`.
 - `round` — integer, starting at `1`, incremented by 1 each fix round.
+- `head_commit` — the full SHA containing the reviewed plan. Run `git rev-parse HEAD` after committing the plan.
 
 ### Body
 
@@ -204,7 +206,7 @@ Do **not** process a handoff in `inbox/` whose `id` field duplicates a file alre
 ```markdown
 ---
 id: <unique-id>
-type: <plan-review|code-review|etc>
+type: <plan-review-verdict|code-review|etc>
 status: ready
 created_by: codex
 outcome: changes_requested|approved|blocked
@@ -258,17 +260,22 @@ Write the `done/` result file **before** moving/archiving the original handoff.
 
 ## Fix Rounds
 
-When a consumed handoff has `outcome: changes_requested` (plan-review or code-review):
+When a consumed handoff has `outcome: changes_requested` (`plan-review-verdict` or `code-review`):
 
 1. Apply the requested changes and verify the acceptance criteria.
 2. Commit the changes (`git rev-parse HEAD` after committing gives the new `head_commit`).
 3. Increment `round` by 1 from the previous published handoff.
 4. Publish the next wake signal to the **current lane worktree's** `.agent-handoff/inbox/`:
-   - plan-review fix round → a new `plan-review` handoff (same `workflow_id`, new `id`, `round+1`);
+- plan-review fix round → a new `plan-review` handoff (same `workflow_id`, new `id`, `round+1`);
    - code-review fix round → a new `implementation-response` (same `workflow_id`, new `id`, `round+1`, new `head_commit`).
 5. Leave the original handoff and its result file in `done/`/`archive/` as the record of the consumed round.
 
 Do **not** bump the round or publish a new response when the review is `approved` — that is the terminal state.
+
+For an approved `plan-review-verdict`, record and archive the verdict, then
+begin implementation from the approved plan. The terminal-state rule above
+applies only to an approved `code-review`; after implementation is committed
+and verified, publish its `implementation-response` normally.
 
 ## Behavior Rules
 
@@ -284,4 +291,3 @@ Do **not** bump the round or publish a new response when the review is `approved
 - Publish an `implementation-response` only after a commit whose verification passes — never ahead of the commit, and never for a blocked task.
 - Keep `workflow_id` identical across all rounds of one task; make every `id` unique per round.
 - Never include secrets, absolute personal paths, or local session IDs in handoff or response files.
-
