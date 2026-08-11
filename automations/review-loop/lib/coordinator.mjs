@@ -4,6 +4,7 @@ import { isWorkflowHandoff, readHandoff } from "./handoff.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 const ACTIVE_STATES = new Set(["idle", "waiting"])
+const COMPACTION_SETTLE_MS = 2_000
 
 /** Coordinates one persisted AoE pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
@@ -22,6 +23,8 @@ export class ReviewLoopCoordinator {
     if (lane.state === "approved" || lane.state === "blocked") return []
     const sessions = await this.aoe.runningSessions()
     const states = new Map(sessions.map((session) => [session.session, session.state]))
+    const transition = await this.advancePlanTransition(lane, states)
+    if (transition) return [transition]
     const handoffs = await handoffsFor(lane.worktreePath)
     const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     const results = []
@@ -45,13 +48,54 @@ export class ReviewLoopCoordinator {
       }
       const sessionId = event.destination === "codex" ? lane.codexSessionId : lane.opencodeSessionId
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
-      await this.aoe.send(sessionId, promptFor(event))
+      if (event.destination === "opencode" && event.reviewKind === "plan" && event.outcome === "approved") {
+        this.state.saveLane({
+          ...lane,
+          state: "compacting",
+          phase: "compacting",
+          transitionHandoffPath: event.handoff.path,
+          transitionWorkflowId: event.handoff.metadata.workflow_id,
+          transitionRequestedAt: new Date().toISOString(),
+        })
+        await this.aoe.send(sessionId, "/compact")
+        this.state.markDispatched(lane.worktreePath, event.key)
+        results.push({ event, action: "sent:opencode:compact" })
+        break
+      }
+      await this.aoe.send(sessionId, opencodePrompt(lane, event))
       this.state.markDispatched(lane.worktreePath, event.key)
-      this.state.saveLane({ ...lane, state: event.destination === "codex" ? "reviewing" : "implementing" })
+      this.state.saveLane({
+        ...lane,
+        state: event.destination === "codex" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
+      })
       results.push({ event, action: `sent:${event.destination}` })
       break
     }
     return results
+  }
+
+  async advancePlanTransition(lane, states) {
+    if (lane.phase !== "compacting") return null
+    const requestedAt = Date.parse(lane.transitionRequestedAt ?? "")
+    if (!Number.isFinite(requestedAt) || Date.now() - requestedAt < COMPACTION_SETTLE_MS) return null
+    const state = String(states.get(lane.opencodeSessionId)).toLowerCase()
+    if (!ACTIVE_STATES.has(state)) return null
+    const eventKey = `plan-build:${lane.transitionWorkflowId}:${lane.transitionHandoffPath}`
+    if (this.state.hasDispatched(lane.worktreePath, eventKey)) return null
+    await this.aoe.send(
+      lane.opencodeSessionId,
+      `/tars-build Continue the approved TARS plan. Read ${lane.transitionHandoffPath}, then implement it. When implementation is committed and verified, publish an implementation-response with workflow_id ${lane.transitionWorkflowId}. Do not push or create a pull request yet.`,
+    )
+    this.state.markDispatched(lane.worktreePath, eventKey)
+    this.state.saveLane({
+      ...lane,
+      state: "implementing",
+      phase: "building",
+      transitionHandoffPath: null,
+      transitionWorkflowId: null,
+      transitionRequestedAt: null,
+    })
+    return { event: { handoff: { metadata: { id: lane.transitionWorkflowId } } }, action: "sent:opencode:build" }
   }
 }
 
@@ -150,9 +194,17 @@ function promptFor(event) {
   }
   if (event.destination === "opencode" && event.reviewKind === "plan") {
     if (event.outcome === "approved") {
-      return `Review-loop: the plan review is approved. Read ${path}, record the approved plan-review verdict using the handoff protocol, then begin implementation from the approved plan. When implementation is committed and verified, publish an implementation-response with workflow_id ${event.handoff.metadata.workflow_id}. Do not push or create a pull request yet.`
+      return ""
     }
     return `Review-loop: read ${path}, revise the plan to address the requested changes, validate the revised plan, then publish one plan-review handoff with workflow_id ${event.handoff.metadata.workflow_id} and round ${event.round + 1}. Do not begin implementation until the plan review is approved.`
   }
   return `Review-loop: read ${path}, apply the requested review changes, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, and head_commit. Do not request a manual handoff.`
+}
+
+function opencodePrompt(lane, event) {
+  const prompt = promptFor(event)
+  if (event.destination === "opencode" && lane.planning === "required" && lane.phase === "building") {
+    return `/tars-build ${prompt}`
+  }
+  return prompt
 }

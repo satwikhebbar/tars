@@ -14,6 +14,7 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
     branch: "issue/44-add-calendar-export",
     worktreeName: "issue-44-add-calendar-export",
     maxRounds: 5,
+    planning: "not_required",
     openingPrompt: issueOpeningPrompt(issue),
   })
   assert.equal(lane.worktreePath, "/repo--issue-44-add-calendar-export")
@@ -25,6 +26,26 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(aoe.titles[0], "issue-44-add-calendar-export")
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
   assert.equal(state.entries[0].codexSessionId, "codex-44")
+  assert.equal(state.entries[0].phase, "building")
+})
+
+test("starts a planning lane with OpenCode plan arguments", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  await startLane({
+    aoe,
+    state,
+    repoPath: "/repo",
+    issue: { number: 44, title: "Add calendar export" },
+    branch: "issue/44-add-calendar-export",
+    worktreeName: "issue-44-add-calendar-export",
+    maxRounds: 5,
+    planning: "required",
+    planModel: "deepseek/v4-pro",
+    openingPrompt: "plan",
+  })
+  assert.deepEqual(aoe.extraArgs, ["--agent", "plan", "--model", "deepseek/v4-pro"])
+  assert.equal(state.entries[0].phase, "planning")
 })
 
 test("closes an approved lane through AoE before deleting its worktree", async () => {
@@ -146,9 +167,10 @@ class FakeAoe {
     this.runtime = []
   }
 
-  async findOrCreateWorktreeSession(repoPath, branch, title) {
+  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [] } = {}) {
     this.added.push([repoPath, branch])
     this.titles.push(title)
+    this.extraArgs = extraArgs
     return { id: "open-44", path: "/repo--issue-44-add-calendar-export" }
   }
 

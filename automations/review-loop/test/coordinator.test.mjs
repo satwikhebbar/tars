@@ -40,7 +40,7 @@ test("accepts a numeric issue number as the stable workflow ID", async () => {
   fixture.state.close()
 })
 
-test("plan review wakes Codex, then its verdict wakes OpenCode without approving the lane", async () => {
+test("plan approval compacts then starts Build mode without approving the lane", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
     fixture.worktree,
@@ -57,10 +57,18 @@ test("plan review wakes Codex, then its verdict wakes OpenCode without approving
     `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\nresponds_to: 53-plan-review-1`,
   )
   await fixture.coordinator.processAll()
-  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
   assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1", "opencode-1"])
-  assert.match(fixture.aoe.sent[1].message, /begin implementation/i)
-  assert.doesNotMatch(fixture.aoe.sent[1].message, /push the approved branch/i)
+  assert.equal(fixture.aoe.sent[1].message, "/compact")
+  assert.equal(fixture.state.lane(fixture.worktree).phase, "compacting")
+
+  const compactingLane = fixture.state.lane(fixture.worktree)
+  fixture.state.saveLane({ ...compactingLane, transitionRequestedAt: new Date(Date.now() - 3_000).toISOString() })
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
+  assert.equal(fixture.state.lane(fixture.worktree).phase, "building")
+  assert.match(fixture.aoe.sent[2].message, /^\/tars-build /)
+  assert.match(fixture.aoe.sent[2].message, /Continue the approved TARS plan/)
+  assert.doesNotMatch(fixture.aoe.sent[2].message, /push the approved branch/i)
   fixture.state.close()
 })
 
@@ -119,6 +127,8 @@ async function laneFixture({ maxRounds = 5 } = {}) {
     codexSessionId: "codex-1",
     state: "watching",
     maxRounds,
+    planning: "required",
+    phase: "planning",
   })
   const aoe = new FakeAoe()
   return { worktree, state, aoe, coordinator: new ReviewLoopCoordinator({ aoe, state }) }

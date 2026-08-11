@@ -6,8 +6,8 @@ import { join } from "node:path"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
-import { closeLane, issueOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
-import { chooseLaneName, fallbackLaneName } from "./lib/namer.mjs"
+import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { StateStore } from "./lib/state.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
@@ -30,6 +30,8 @@ async function main() {
       branch: { type: "string" },
       "worktree-name": { type: "string" },
       prompt: { type: "string" },
+      planning: { type: "string" },
+      "plan-model": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
     },
@@ -88,10 +90,12 @@ async function launch({ values, state }) {
   const issueNumber = positiveInteger(values.issue, undefined, "--issue")
   const repoPath = await realpath(values.repo)
   const issue = await readIssue(repoPath, issueNumber)
-  const fallback = fallbackLaneName(issue)
+  const fallback = fallbackLanePreflight(issue)
+  const preflight = values.planning === "always" || values.planning === "never" ? fallback : await chooseLanePreflight(issue, runNamer)
+  const planning = resolvePlanning(values.planning, preflight.planning)
   const names = values.branch
     ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
-    : await chooseLaneName(issue, runNamer)
+    : preflight
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
   const lane = await startLane({
     aoe: laneAoe(new AoeClient()),
@@ -101,7 +105,9 @@ async function launch({ values, state }) {
     branch: names.branch,
     worktreeName: values["worktree-name"] ?? names.worktreeName,
     maxRounds,
-    openingPrompt: values.prompt ?? issueOpeningPrompt(issue),
+    planning,
+    planModel: values["plan-model"],
+    openingPrompt: values.prompt ?? (planning === "required" ? planOpeningPrompt(issue) : issueOpeningPrompt(issue)),
   })
   console.log(`started: ${lane.worktreePath}\t${lane.opencodeSessionId}\t${lane.codexSessionId}\t${names.branch}`)
 }
@@ -161,7 +167,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs start --worktree <path> [--opencode <session-id> --codex <session-id> | --create-sessions] [--once]
   node automations/review-loop/cli.mjs watch [--once]
   node automations/review-loop/cli.mjs lane register --worktree <path> [--create-sessions]
-  node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
   node automations/review-loop/cli.mjs status`)
 }
@@ -170,9 +176,9 @@ function laneAoe(client) {
   return {
     discoverPair: (worktreePath) => discoverPair(client, worktreePath),
     createPair: (worktreePath) => createPair(client, worktreePath),
-    findOrCreateWorktreeSession: async (repoPath, branch, title) => {
+    findOrCreateWorktreeSession: async (repoPath, branch, title, options) => {
       const existing = await findWorktreeSession(client, repoPath, branch)
-      return existing ?? client.createWorktreeSession(repoPath, branch, title)
+      return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title) => client.addSession(worktreePath, tool, title),
     send: (sessionId, message) => client.send(sessionId, message),
@@ -180,6 +186,13 @@ function laneAoe(client) {
     runtimeSessions: (options) => client.runtimeSessions(options),
     removeSession: (sessionId, options) => client.removeSession(sessionId, options),
   }
+}
+
+function resolvePlanning(value, suggested) {
+  if (value === undefined || value === "auto") return suggested
+  if (value === "always") return "required"
+  if (value === "never") return "not_required"
+  throw new Error("--planning must be auto, always, or never")
 }
 
 async function findWorktreeSession(client, repoPath, branch) {

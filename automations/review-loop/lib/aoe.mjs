@@ -46,9 +46,9 @@ export class AoeClient {
     return session
   }
 
-  async createWorktreeSession(repoPath, branch, title) {
+  async createWorktreeSession(repoPath, branch, title, { extraArgs = [] } = {}) {
     const before = await this.listSessions()
-    await execFileAsync(this.command, [
+    const args = [
       "add",
       repoPath,
       "--tool",
@@ -58,7 +58,11 @@ export class AoeClient {
       "--worktree",
       branch,
       "--new-branch",
-    ])
+    ]
+    // AoE forwards this value to the OpenCode process when the session starts.
+    // Keep it a single argument because AoE owns shell splitting at that boundary.
+    if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
+    await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, "opencode")
     await this.startSession(session.id)
     return session

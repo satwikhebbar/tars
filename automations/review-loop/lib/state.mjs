@@ -20,6 +20,12 @@ export class StateStore {
         codex_session_id TEXT NOT NULL,
         state TEXT NOT NULL,
         max_rounds INTEGER NOT NULL,
+        planning TEXT NOT NULL DEFAULT 'not_required',
+        phase TEXT NOT NULL DEFAULT 'building',
+        plan_model TEXT,
+        transition_handoff_path TEXT,
+        transition_workflow_id TEXT,
+        transition_requested_at TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS dispatched_events (
@@ -29,6 +35,20 @@ export class StateStore {
         PRIMARY KEY (worktree_path, event_key)
       );
     `)
+    for (const column of [
+      "planning TEXT NOT NULL DEFAULT 'not_required'",
+      "phase TEXT NOT NULL DEFAULT 'building'",
+      "plan_model TEXT",
+      "transition_handoff_path TEXT",
+      "transition_workflow_id TEXT",
+      "transition_requested_at TEXT",
+    ]) {
+      try {
+        this.database.exec(`ALTER TABLE lanes ADD COLUMN ${column}`)
+      } catch (error) {
+        if (!String(error.message).includes("duplicate column name")) throw error
+      }
+    }
   }
 
   close() {
@@ -38,13 +58,19 @@ export class StateStore {
 
   saveLane(lane) {
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, state, max_rounds, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worktree_path) DO UPDATE SET
           opencode_session_id = excluded.opencode_session_id,
           codex_session_id = excluded.codex_session_id,
           state = excluded.state,
           max_rounds = excluded.max_rounds,
+          planning = excluded.planning,
+          phase = excluded.phase,
+          plan_model = excluded.plan_model,
+          transition_handoff_path = excluded.transition_handoff_path,
+          transition_workflow_id = excluded.transition_workflow_id,
+          transition_requested_at = excluded.transition_requested_at,
           updated_at = excluded.updated_at`)
       .run(
         lane.worktreePath,
@@ -52,6 +78,12 @@ export class StateStore {
         lane.codexSessionId,
         lane.state,
         lane.maxRounds,
+        lane.planning ?? "not_required",
+        lane.phase ?? "building",
+        lane.planModel ?? null,
+        lane.transitionHandoffPath ?? null,
+        lane.transitionWorkflowId ?? null,
+        lane.transitionRequestedAt ?? null,
         new Date().toISOString(),
       )
   }
@@ -91,5 +123,11 @@ function toLane(row) {
     codexSessionId: row.codex_session_id,
     state: row.state,
     maxRounds: row.max_rounds,
+    planning: row.planning,
+    phase: row.phase,
+    planModel: row.plan_model,
+    transitionHandoffPath: row.transition_handoff_path,
+    transitionWorkflowId: row.transition_workflow_id,
+    transitionRequestedAt: row.transition_requested_at,
   }
 }

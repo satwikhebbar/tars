@@ -6,8 +6,10 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, create
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt }) {
-  const opencode = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName)
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel }) {
+  const opencode = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
+    extraArgs: planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [],
+  })
   const codex = await aoe.addSession(opencode.path, "codex", `Issue ${issue.number} reviewer`)
   const worktreePath = opencode.path
   state.saveLane({
@@ -16,6 +18,9 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     codexSessionId: codex.id,
     state: "watching",
     maxRounds,
+    planning,
+    phase: planning === "required" ? "planning" : "building",
+    planModel: planModel ?? null,
   })
   await aoe.send(opencode.id, openingPrompt)
   return { worktreePath, opencodeSessionId: opencode.id, codexSessionId: codex.id }
@@ -107,4 +112,8 @@ async function assertStoppedDeadSessions(aoe, sessionIds) {
 
 export function issueOpeningPrompt(issue) {
   return `You are the implementation agent for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response.`
+}
+
+export function planOpeningPrompt(issue) {
+  return `You are the planning agent for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree. Remain in Plan mode: inspect and design only; do not edit implementation files. Write the requested plan artifact under plans/, commit that plan artifact, then follow handoff-review to publish a plan-review handoff for Codex. Do not begin implementation until TARS reports that Codex approved the plan.`
 }

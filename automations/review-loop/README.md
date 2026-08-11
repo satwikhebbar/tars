@@ -31,10 +31,19 @@ For a new GitHub issue, let TARS ask OpenCode for a branch-name suggestion in a 
 ```bash
 node automations/review-loop/cli.mjs lane start \
   --repo /absolute/path/to/main-checkout \
-  --issue 44
+  --issue 44 \
+  --planning auto
 ```
 
-The namer proposes both the branch and the AoE worktree name. Pass `--branch <name>` and, when needed, `--worktree-name <name>` to override them. The command prints the created worktree and both session IDs, then sends the implementation session its opening issue prompt. It does not start another polling loop.
+The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid preflight falls back to the safer plan-first path. Pass `--plan-model <provider/model>` to launch a plan-first OpenCode session with a specific model.
+
+For `planning: required`, TARS launches OpenCode with its `plan` agent, waits for Codex to approve the `plan-review`, sends `/compact`, then invokes the global `/tars-build` command to continue in OpenCode's `build` agent. Install that command once before starting a plan-first lane:
+
+```bash
+node commands/install.mjs opencode tars-build --force
+```
+
+For `planning: not_required`, TARS follows the original direct Build → code-review loop. The command prints the created worktree and both session IDs, then sends the appropriate opening issue prompt. It does not start another polling loop.
 
 Run one watcher to serve every registered lane:
 
@@ -100,9 +109,10 @@ target:
 Codex replies in that same worktree with `type: plan-review-verdict`, the same
 `workflow_id` and `round`, `responds_to` set to the request id, and an
 `approved`, `changes_requested`, or `blocked` outcome. Plan approval wakes
-OpenCode to implement; it is not a terminal lane approval and never creates a
-pull request. Plan changes requested wake OpenCode to revise and republish the
-plan at the next round.
+OpenCode through a lane-local compact → Build transition; it is not a terminal
+lane approval and never creates a pull request. Plan changes requested wake
+OpenCode to revise and republish the plan at the next round. Each transition is
+persisted per lane, so concurrent lanes progress independently.
 
 OpenCode writes an `implementation-response` after committing:
 

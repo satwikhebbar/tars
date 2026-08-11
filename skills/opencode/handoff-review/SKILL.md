@@ -47,7 +47,7 @@ Queue contents are gitignored, except `.gitkeep` files and `.agent-handoff/READM
 
 ## Publish Plan Review
 
-Before starting implementation on a feature/enhancement, publish a `plan-review` handoff to wake the matching Codex review session so the plan is reviewed first.
+Publish a `plan-review` handoff only when the TARS opening prompt starts this lane in Plan mode, or when TARS wakes you to revise a plan. A lane explicitly started for direct implementation skips this stage and publishes its first `implementation-response` after its implementation commit.
 
 ### When to publish
 
