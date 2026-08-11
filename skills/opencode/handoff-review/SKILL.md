@@ -24,14 +24,14 @@ plan draft → publish plan-review to worktree inbox/ (wakes Codex)
 Codex writes plan-review-verdict to worktree inbox/ (approved | changes_requested)
                               │
                               ▼
-implement → commit → publish implementation-response to worktree inbox/ (wakes Codex)
+implement one scheduled iteration → commit → publish implementation-response to worktree inbox/ (wakes Codex)
                               │
                               ▼
 Codex writes code-review handoff to worktree inbox/   (outcome: changes_requested | approved)
                               │
                               ▼
-OpenCode claims handoff → applies changes → commits → publishes next
-implementation-response (round+1) ─────────► back to Codex until approved
+OpenCode claims handoff → applies changes in the same iteration → commits →
+publishes next implementation-response (round+1) ─────────► back to Codex
 ```
 
 ## Folder Layout
@@ -149,6 +149,7 @@ status: ready
 created_by: opencode
 workflow_id: <stable-workflow-id>
 round: <integer, starting at 1>
+iteration: <integer, starting at 1 when TARS supplied an iteration schedule>
 head_commit: <full git commit SHA>
 target:
   - <changed paths or task scope>
@@ -161,6 +162,7 @@ Field rules:
 - `workflow_id` — the stable identifier for the task. **Keep it identical across all review rounds for one task** (e.g. the issue number or branch-based task id).
 - `id` — unique per round, e.g. `<workflow-id>-response-<round>` or `<workflow-id>-<round>-<short-topic>`. Never reuse an `id` from a previous round.
 - `round` — integer, starting at `1`, incremented by 1 each fix round.
+- `iteration` — copy the iteration number from TARS's Build prompt. Keep it unchanged for any fix round within that iteration.
 - `head_commit` — the full SHA of the commit this response reports. Run `git rev-parse HEAD` to get it.
 - `target` — the changed file paths (relative to repo root) or the task scope.
 
@@ -273,9 +275,11 @@ When a consumed handoff has `outcome: changes_requested` (`plan-review-verdict` 
 Do **not** bump the round or publish a new response when the review is `approved` — that is the terminal state.
 
 For an approved `plan-review-verdict`, record and archive the verdict, then
-begin implementation from the approved plan. The terminal-state rule above
-applies only to an approved `code-review`; after implementation is committed
-and verified, publish its `implementation-response` normally.
+wait for TARS's `/tars-build` prompt. Implement only the requested iteration
+from the verdict's `Implementation Iterations` schedule; do not begin a later
+iteration. The terminal-state rule above applies only to an approved final
+`code-review`; after each implementation iteration is committed and verified,
+publish its `implementation-response` normally.
 
 ## Behavior Rules
 

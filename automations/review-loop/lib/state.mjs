@@ -26,6 +26,10 @@ export class StateStore {
         transition_handoff_path TEXT,
         transition_workflow_id TEXT,
         transition_requested_at TEXT,
+        plan_verdict_path TEXT,
+        plan_verdict_id TEXT,
+        iteration_count INTEGER NOT NULL DEFAULT 1,
+        current_iteration INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS dispatched_events (
@@ -42,6 +46,10 @@ export class StateStore {
       "transition_handoff_path TEXT",
       "transition_workflow_id TEXT",
       "transition_requested_at TEXT",
+      "plan_verdict_path TEXT",
+      "plan_verdict_id TEXT",
+      "iteration_count INTEGER NOT NULL DEFAULT 1",
+      "current_iteration INTEGER NOT NULL DEFAULT 1",
     ]) {
       try {
         this.database.exec(`ALTER TABLE lanes ADD COLUMN ${column}`)
@@ -58,8 +66,8 @@ export class StateStore {
 
   saveLane(lane) {
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worktree_path) DO UPDATE SET
           opencode_session_id = excluded.opencode_session_id,
           codex_session_id = excluded.codex_session_id,
@@ -71,6 +79,10 @@ export class StateStore {
           transition_handoff_path = excluded.transition_handoff_path,
           transition_workflow_id = excluded.transition_workflow_id,
           transition_requested_at = excluded.transition_requested_at,
+          plan_verdict_path = excluded.plan_verdict_path,
+          plan_verdict_id = excluded.plan_verdict_id,
+          iteration_count = excluded.iteration_count,
+          current_iteration = excluded.current_iteration,
           updated_at = excluded.updated_at`)
       .run(
         lane.worktreePath,
@@ -84,6 +96,10 @@ export class StateStore {
         lane.transitionHandoffPath ?? null,
         lane.transitionWorkflowId ?? null,
         lane.transitionRequestedAt ?? null,
+        lane.planVerdictPath ?? null,
+        lane.planVerdictId ?? null,
+        lane.iterationCount ?? 1,
+        lane.currentIteration ?? 1,
         new Date().toISOString(),
       )
   }
@@ -129,5 +145,9 @@ function toLane(row) {
     transitionHandoffPath: row.transition_handoff_path,
     transitionWorkflowId: row.transition_workflow_id,
     transitionRequestedAt: row.transition_requested_at,
+    planVerdictPath: row.plan_verdict_path,
+    planVerdictId: row.plan_verdict_id,
+    iterationCount: row.iteration_count,
+    currentIteration: row.current_iteration,
   }
 }

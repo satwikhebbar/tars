@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises"
+import { access, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { isWorkflowHandoff, readHandoff } from "./handoff.mjs"
 
@@ -29,16 +29,28 @@ export class ReviewLoopCoordinator {
     const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     const results = []
     for (const event of events) {
+      if (this.state.hasDispatched(lane.worktreePath, event.key)) continue
+      if (!matchesCurrentIteration(lane, event)) continue
       if (event.round > lane.maxRounds) {
         this.state.saveLane({ ...lane, state: "blocked" })
         results.push({ event, action: "blocked", reason: "max_rounds" })
         break
       }
-      if (this.state.hasDispatched(lane.worktreePath, event.key)) continue
       if (event.destination === "terminal") {
         if (event.outcome === "approved") {
           const sessionId = lane.opencodeSessionId
           if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
+          if (hasNextIteration(lane, event)) {
+            const nextIteration = lane.currentIteration + 1
+            await this.aoe.send(
+              sessionId,
+              iterationPrompt(lane, event.handoff.metadata.workflow_id, await planVerdictPathFor(lane), nextIteration),
+            )
+            this.state.saveLane({ ...lane, state: "implementing", phase: "building", currentIteration: nextIteration })
+            this.state.markDispatched(lane.worktreePath, event.key)
+            results.push({ event, action: `sent:opencode:iteration-${nextIteration}` })
+            break
+          }
           await this.aoe.send(sessionId, promptFor(event))
         }
         this.state.markDispatched(lane.worktreePath, event.key)
@@ -56,6 +68,10 @@ export class ReviewLoopCoordinator {
           transitionHandoffPath: event.handoff.path,
           transitionWorkflowId: event.handoff.metadata.workflow_id,
           transitionRequestedAt: new Date().toISOString(),
+          planVerdictPath: event.handoff.path,
+          planVerdictId: event.handoff.metadata.id,
+          iterationCount: iterationCountFor(event.handoff.metadata),
+          currentIteration: 1,
         })
         await this.aoe.send(sessionId, "/compact")
         this.state.markDispatched(lane.worktreePath, event.key)
@@ -84,7 +100,7 @@ export class ReviewLoopCoordinator {
     if (this.state.hasDispatched(lane.worktreePath, eventKey)) return null
     await this.aoe.send(
       lane.opencodeSessionId,
-      `/tars-build Continue the approved TARS plan. Read ${lane.transitionHandoffPath}, then implement it. When implementation is committed and verified, publish an implementation-response with workflow_id ${lane.transitionWorkflowId}. Do not push or create a pull request yet.`,
+      iterationPrompt(lane, lane.transitionWorkflowId, await planVerdictPathFor(lane), lane.currentIteration),
     )
     this.state.markDispatched(lane.worktreePath, eventKey)
     this.state.saveLane({
@@ -117,6 +133,32 @@ export async function handoffsFor(worktreePath) {
   }
   const handoffs = await Promise.all(files.map(readHandoff))
   return handoffs.filter((handoff) => handoff && isWorkflowHandoff(handoff))
+}
+
+async function planVerdictPathFor(lane) {
+  if (lane.planVerdictPath) {
+    try {
+      await access(lane.planVerdictPath)
+      return lane.planVerdictPath
+    } catch {}
+  }
+  const root = join(lane.worktreePath, ".agent-handoff")
+  for (const directory of ["inbox", "in-progress", "done", "archive"]) {
+    let entries
+    try {
+      entries = await readdir(join(root, directory), { withFileTypes: true })
+    } catch (error) {
+      if (error?.code === "ENOENT") continue
+      throw error
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue
+      const path = join(root, directory, entry.name)
+      const handoff = await readHandoff(path)
+      if (handoff?.metadata.id === lane.planVerdictId) return path
+    }
+  }
+  throw new Error(`Cannot find approved plan verdict ${lane.planVerdictId} for ${lane.worktreePath}.`)
 }
 
 function classifyEvent(handoff) {
@@ -158,6 +200,7 @@ function classifyEvent(handoff) {
       round: metadata.round,
       destination: "codex",
       reviewKind: "code",
+      iteration: iterationFor(metadata),
     }
   }
   if (metadata.type === "code-review" && typeof metadata.outcome === "string") {
@@ -168,10 +211,19 @@ function classifyEvent(handoff) {
         round: metadata.round,
         destination: "terminal",
         outcome: metadata.outcome,
+        reviewKind: "code",
+        iteration: iterationFor(metadata),
       }
     }
     if (metadata.outcome === "changes_requested") {
-      return { key: `review:${metadata.id}:changes_requested`, handoff, round: metadata.round, destination: "opencode" }
+      return {
+        key: `review:${metadata.id}:changes_requested`,
+        handoff,
+        round: metadata.round,
+        destination: "opencode",
+        reviewKind: "code",
+        iteration: iterationFor(metadata),
+      }
     }
   }
   return null
@@ -184,10 +236,10 @@ function compareEvents(left, right) {
 function promptFor(event) {
   const path = event.handoff.path
   if (event.destination === "codex" && event.reviewKind === "plan") {
-    return `Review-loop: use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. Do not implement the plan or edit implementation files.`
+    return `Review-loop: use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count and a numbered Implementation Iterations schedule. Do not implement the plan or edit implementation files.`
   }
   if (event.destination === "codex") {
-    return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
+    return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
   }
   if (event.destination === "terminal" && event.outcome === "approved") {
     return `Review-loop: the handoff review is approved and complete. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not make implementation changes unless needed to resolve a push or PR blocker.`
@@ -198,7 +250,7 @@ function promptFor(event) {
     }
     return `Review-loop: read ${path}, revise the plan to address the requested changes, validate the revised plan, then publish one plan-review handoff with workflow_id ${event.handoff.metadata.workflow_id} and round ${event.round + 1}. Do not begin implementation until the plan review is approved.`
   }
-  return `Review-loop: read ${path}, apply the requested review changes, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, and head_commit. Do not request a manual handoff.`
+  return `Review-loop: read ${path}, apply the requested review changes for iteration ${event.iteration}, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. Do not request a manual handoff.`
 }
 
 function opencodePrompt(lane, event) {
@@ -207,4 +259,25 @@ function opencodePrompt(lane, event) {
     return `/tars-build ${prompt}`
   }
   return prompt
+}
+
+function iterationCountFor(metadata) {
+  return Number.isInteger(metadata.iteration_count) && metadata.iteration_count > 0 ? metadata.iteration_count : 1
+}
+
+function iterationFor(metadata) {
+  return Number.isInteger(metadata.iteration) && metadata.iteration > 0 ? metadata.iteration : 1
+}
+
+function matchesCurrentIteration(lane, event) {
+  if (lane.planning !== "required" || event.reviewKind !== "code") return true
+  return event.iteration === lane.currentIteration
+}
+
+function hasNextIteration(lane, event) {
+  return event.reviewKind === "code" && lane.currentIteration < lane.iterationCount
+}
+
+function iterationPrompt(lane, workflowId, planVerdictPath, iteration) {
+  return `/tars-build Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with workflow_id ${workflowId}, iteration ${iteration}, and head_commit. Do not start a later iteration, push, or create a pull request yet.`
 }

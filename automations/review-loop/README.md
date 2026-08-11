@@ -114,6 +114,14 @@ lane approval and never creates a pull request. Plan changes requested wake
 OpenCode to revise and republish the plan at the next round. Each transition is
 persisted per lane, so concurrent lanes progress independently.
 
+An approved plan verdict also contains an ordered `Implementation Iterations`
+schedule and an `iteration_count` frontmatter value. TARS starts only iteration
+1. Each iteration must commit, publish an `implementation-response` with its
+`iteration`, and receive Codex approval before TARS starts the next one. A
+requested change stays in the current iteration. Only approval of the final
+iteration invokes the normal push-and-create-PR handoff. Direct Build lanes
+remain a single iteration without extra plan-review steps.
+
 OpenCode writes an `implementation-response` after committing:
 
 ```yaml
@@ -121,6 +129,7 @@ id: calendar-fix-r2-response
 type: implementation-response
 workflow_id: calendar-fix
 round: 2
+iteration: 1
 head_commit: 0123abc
 ```
 
@@ -131,6 +140,7 @@ id: calendar-fix-r2-review
 type: code-review
 workflow_id: calendar-fix
 round: 2
+iteration: 1
 outcome: changes_requested # approved | changes_requested | blocked
 ```
 

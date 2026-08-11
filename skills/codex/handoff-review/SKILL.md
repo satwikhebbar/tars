@@ -28,6 +28,14 @@ the request `id`, and set `outcome` to exactly one of `approved`,
 `changes_requested`, or `blocked`. Do not implement the plan or edit
 implementation files.
 
+For an approved plan, include a numbered `implementation_iterations` schedule
+in the verdict body and set `iteration_count` in the frontmatter to the same
+positive integer. Make each iteration independently buildable, testable, and
+small enough for one commit and review. Use one iteration when splitting would
+not improve reviewability. For every iteration, name its scope, acceptance
+criteria, and verification. Request plan changes when the proposed order would
+leave an unsafe intermediate state.
+
 When an AoE/TARS coordinator asks for a code review, it supplies the path to
 an `implementation-response` and its immutable `head_commit`. Read that
 handoff, review exactly that commit, and do not edit implementation files.
@@ -37,6 +45,10 @@ Write exactly one `code-review` handoff to `.agent-handoff/inbox/`. Copy
 `responds_to` to its `id`, and set `outcome` to exactly one of `approved`,
 `changes_requested`, or `blocked`. Do not move, archive, or delete the
 implementation response, and do not create another review handoff for it.
+
+Copy `iteration` unchanged when the implementation response carries it. Review
+only that scheduled iteration; approval permits TARS to start the next one or,
+for the final iteration, to create the pull request.
 
 For `changes_requested`, include concrete requested changes and acceptance
 criteria. For `approved`, explicitly state that no changes are required. For
@@ -155,6 +167,7 @@ status: ready
 created_by: codex
 workflow_id: stable-workflow-id
 round: 1
+iteration: 1 # copy from the implementation response when present
 outcome: changes_requested # approved | changes_requested | blocked
 responds_to: implementation-response-id
 target:
@@ -176,11 +189,23 @@ workflow_id: stable-workflow-id
 round: 1
 outcome: changes_requested # approved | changes_requested | blocked
 responds_to: plan-review-request-id
+iteration_count: 2 # required when outcome is approved
 target:
   - plans/the-plan.html
 priority: normal
 cleanup: archive
 ---
+
+## Implementation Iterations
+
+1. **Iteration 1 — concise title**
+   - Scope: paths and behavior included in this commit.
+   - Acceptance criteria: observable completed behavior.
+   - Verification: commands or tests.
+2. **Iteration 2 — concise title**
+   - Scope: paths and behavior included in this commit.
+   - Acceptance criteria: observable completed behavior.
+   - Verification: commands or tests.
 ```
 
 Valid `type` values:

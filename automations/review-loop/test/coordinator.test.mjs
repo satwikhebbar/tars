@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -69,6 +69,59 @@ test("plan approval compacts then starts Build mode without approving the lane",
   assert.match(fixture.aoe.sent[2].message, /^\/tars-build /)
   assert.match(fixture.aoe.sent[2].message, /Continue the approved TARS plan/)
   assert.doesNotMatch(fixture.aoe.sent[2].message, /push the approved branch/i)
+  fixture.state.close()
+})
+
+test("a planned lane reviews each approved iteration before opening a PR", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/plan-verdict.md",
+    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 2\nresponds_to: 53-plan-review-1`,
+  )
+  await fixture.coordinator.processAll()
+  const compactingLane = fixture.state.lane(fixture.worktree)
+  fixture.state.saveLane({ ...compactingLane, transitionRequestedAt: new Date(Date.now() - 3_000).toISOString() })
+  await fixture.coordinator.processAll()
+  assert.match(fixture.aoe.sent.at(-1).message, /iteration 1 of 2/)
+  await mkdir(join(fixture.worktree, ".agent-handoff", "archive"), { recursive: true })
+  await rename(
+    join(fixture.worktree, ".agent-handoff", "inbox", "plan-verdict.md"),
+    join(fixture.worktree, ".agent-handoff", "archive", "plan-verdict.md"),
+  )
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/iteration-1-response.md",
+    `id: 53-iteration-1-response\ntype: implementation-response\nworkflow_id: 53\nround: 2\niteration: 1\nhead_commit: abc123`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.aoe.sent.at(-1).sessionId, "codex-1")
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/iteration-1-review.md",
+    `id: 53-iteration-1-review\ntype: code-review\nworkflow_id: 53\nround: 2\niteration: 1\noutcome: approved\nresponds_to: 53-iteration-1-response`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).currentIteration, 2)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
+  assert.match(fixture.aoe.sent.at(-1).message, /iteration 2 of 2/)
+  assert.match(fixture.aoe.sent.at(-1).message, /\.agent-handoff\/archive\/plan-verdict\.md/)
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/iteration-2-response.md",
+    `id: 53-iteration-2-response\ntype: implementation-response\nworkflow_id: 53\nround: 3\niteration: 2\nhead_commit: def456`,
+  )
+  await fixture.coordinator.processAll()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/iteration-2-review.md",
+    `id: 53-iteration-2-review\ntype: code-review\nworkflow_id: 53\nround: 3\niteration: 2\noutcome: approved\nresponds_to: 53-iteration-2-response`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   fixture.state.close()
 })
 
