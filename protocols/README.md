@@ -27,5 +27,11 @@ TARS treats `.agent-handoff/` as the durable event log:
    the next round in the same iteration. An approved non-final iteration wakes
    OpenCode for the next iteration; only final approval and `blocked` are
    terminal.
+6. An approved lane may be deliberately reopened for feedback on its existing
+   pull request. OpenCode commits the feedback changes and writes a new
+   `implementation-response` with `reopen: true`. The coordinator accepts only
+   this explicit marker from an approved lane, wakes Codex, and returns to the
+   normal code-review loop. A renewed approval updates the existing PR; it
+   never creates a second one.
 
 Queue state, AoE session IDs, and handoff contents stay outside TARS.

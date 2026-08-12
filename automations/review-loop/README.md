@@ -145,3 +145,12 @@ outcome: changes_requested # approved | changes_requested | blocked
 ```
 
 An implementation response wakes only that lane's Codex session. `changes_requested` wakes only its OpenCode session. On `approved`, the coordinator wakes OpenCode once to record the completed handoff, push the approved branch, and create a pull request; it then marks the lane approved. `blocked` or a round above the cap stops the lane. Events are journaled in SQLite after successful delivery, making scans idempotent across restarts.
+
+## Re-reviewing feedback on an existing PR
+
+An approved lane stays idle unless OpenCode publishes a new committed
+`implementation-response` with boolean `reopen: true`. This is the deliberate
+re-entry point for GitHub, CodeRabbit, or user PR feedback. The shared watcher
+wakes the lane's Codex session, and normal `changes_requested`/approval handling
+continues. Once Codex approves, TARS tells OpenCode to push to the existing PR;
+it does not create another PR.

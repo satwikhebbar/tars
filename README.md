@@ -31,6 +31,7 @@ cd tars
 node skills/install.mjs codex handoff-review --force
 node skills/install.mjs opencode handoff-review --force
 node skills/install.mjs opencode issue-kickoff --force
+node skills/install.mjs opencode address-pr-feedback --force
 node commands/install.mjs opencode tars-build --force
 ```
 
@@ -95,12 +96,24 @@ Direct-build lane
 OpenCode commit → implementation-response → Codex code review
   → changes requested: revise, commit, and repeat
   → approved: OpenCode pushes the branch and creates the PR
+
+Existing PR feedback
+
+You ask OpenCode to use `address-pr-feedback` → it commits a marked follow-up
+handoff → TARS reopens only that approved lane for Codex review
+  → changes requested: normal repair/review loop
+  → approved: OpenCode pushes the reviewed follow-up to the existing PR
 ```
 
 Codex uses an approved plan verdict to recommend the smallest sensible set of
 independently buildable and testable iterations. TARS stores the current
 iteration per worktree, so multiple plan-first and direct-build lanes can
 advance concurrently without crossing handoffs.
+
+After you or a GitHub-integrated reviewer leaves feedback on an approved PR,
+ask the lane's existing OpenCode session to use `address-pr-feedback`. It reads
+the existing PR feedback, commits and publishes an explicit reopen handoff, and
+leaves delivery to the shared watcher. No second lane or pull request is made.
 
 ## Day-to-day lane commands
 

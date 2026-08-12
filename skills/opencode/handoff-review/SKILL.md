@@ -125,6 +125,10 @@ Publish one response per review round:
 
 - **Initial round** — after the implementation commit is created.
 - **Fix rounds** — after consuming a Codex `code-review` handoff with `outcome: changes_requested`, applying changes, and committing them.
+- **PR-feedback reopen** — after using the `address-pr-feedback` skill on a
+  lane whose first Codex-approved commit already has a pull request. That
+  response must carry `reopen: true`; it restarts Codex review without asking
+  TARS to create another PR.
 
 Do **not** publish an `implementation-response` for:
 - uncommitted work (no commit yet);
@@ -165,6 +169,8 @@ Field rules:
 - `iteration` — copy the iteration number from TARS's Build prompt. Keep it unchanged for any fix round within that iteration.
 - `head_commit` — the full SHA of the commit this response reports. Run `git rev-parse HEAD` to get it.
 - `target` — the changed file paths (relative to repo root) or the task scope.
+- `reopen` — omit normally. Set to boolean `true` only for the first committed
+  response that addresses feedback on the lane's existing pull request.
 
 ### Body
 

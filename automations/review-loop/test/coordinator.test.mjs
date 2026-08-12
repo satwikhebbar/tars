@@ -153,6 +153,31 @@ test("changes requested wakes OpenCode and approval tells OpenCode to push and o
   fixture.state.close()
 })
 
+test("an explicitly reopened approved lane re-reviews PR feedback and updates its existing PR", async () => {
+  const fixture = await laneFixture()
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/pr-feedback-response.md",
+    `id: fix-pr-feedback-response-1\ntype: implementation-response\nworkflow_id: fix\nround: 1\niteration: 1\nreopen: true\nhead_commit: def456`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.aoe.sent.at(-1).sessionId, "codex-1")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
+  assert.equal(fixture.state.lane(fixture.worktree).phase, "post_pr_feedback")
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/pr-feedback-approval.md",
+    `id: fix-pr-feedback-review-1\ntype: code-review\nworkflow_id: fix\nround: 1\niteration: 1\noutcome: approved\nresponds_to: fix-pr-feedback-response-1`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
+  fixture.state.close()
+})
+
 test("a lane blocks instead of dispatching beyond its round limit", async () => {
   const fixture = await laneFixture({ maxRounds: 1 })
   await writeWorkflowHandoff(

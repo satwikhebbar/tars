@@ -20,16 +20,21 @@ export class ReviewLoopCoordinator {
   }
 
   async processLane(lane) {
-    if (lane.state === "approved" || lane.state === "blocked") return []
+    if (lane.state === "blocked") return []
+    const handoffs = await handoffsFor(lane.worktreePath)
+    const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
+    // A completed lane is normally immutable. The one explicit exception is
+    // a fresh implementation response that declares it is addressing feedback
+    // on the lane's already-open pull request.
+    if (lane.state === "approved" && !events.some((event) => event.reopensLane)) return []
     const sessions = await this.aoe.runningSessions()
     const states = new Map(sessions.map((session) => [session.session, session.state]))
     const transition = await this.advancePlanTransition(lane, states)
     if (transition) return [transition]
-    const handoffs = await handoffsFor(lane.worktreePath)
-    const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     const results = []
     for (const event of events) {
       if (this.state.hasDispatched(lane.worktreePath, event.key)) continue
+      if (lane.state === "approved" && !event.reopensLane) continue
       if (!matchesCurrentIteration(lane, event)) continue
       if (event.round > lane.maxRounds) {
         this.state.saveLane({ ...lane, state: "blocked" })
@@ -51,7 +56,7 @@ export class ReviewLoopCoordinator {
             results.push({ event, action: `sent:opencode:iteration-${nextIteration}` })
             break
           }
-          await this.aoe.send(sessionId, promptFor(event))
+          await this.aoe.send(sessionId, promptFor(lane, event))
         }
         this.state.markDispatched(lane.worktreePath, event.key)
         this.state.saveLane({ ...lane, state: event.outcome })
@@ -83,6 +88,7 @@ export class ReviewLoopCoordinator {
       this.state.saveLane({
         ...lane,
         state: event.destination === "codex" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
+        phase: event.reopensLane ? "post_pr_feedback" : lane.phase,
       })
       results.push({ event, action: `sent:${event.destination}` })
       break
@@ -201,6 +207,7 @@ function classifyEvent(handoff) {
       destination: "codex",
       reviewKind: "code",
       iteration: iterationFor(metadata),
+      reopensLane: metadata.reopen === true,
     }
   }
   if (metadata.type === "code-review" && typeof metadata.outcome === "string") {
@@ -233,7 +240,7 @@ function compareEvents(left, right) {
   return left.round - right.round || left.key.localeCompare(right.key)
 }
 
-function promptFor(event) {
+function promptFor(lane, event) {
   const path = event.handoff.path
   if (event.destination === "codex" && event.reviewKind === "plan") {
     return `Review-loop: use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count and a numbered Implementation Iterations schedule. Do not implement the plan or edit implementation files.`
@@ -242,6 +249,9 @@ function promptFor(event) {
     return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
   }
   if (event.destination === "terminal" && event.outcome === "approved") {
+    if (lane.phase === "post_pr_feedback") {
+      return `Review-loop: the follow-up handoff review is approved. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote so the existing pull request is updated. Report the remote branch and existing PR URL when finished. Do not create another pull request or make implementation changes unless needed to resolve a push blocker.`
+    }
     return `Review-loop: the handoff review is approved and complete. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not make implementation changes unless needed to resolve a push or PR blocker.`
   }
   if (event.destination === "opencode" && event.reviewKind === "plan") {
@@ -254,7 +264,7 @@ function promptFor(event) {
 }
 
 function opencodePrompt(lane, event) {
-  const prompt = promptFor(event)
+  const prompt = promptFor(lane, event)
   if (event.destination === "opencode" && lane.planning === "required" && lane.phase === "building") {
     return `/tars-build ${prompt}`
   }
@@ -270,11 +280,13 @@ function iterationFor(metadata) {
 }
 
 function matchesCurrentIteration(lane, event) {
+  if (event.reopensLane || lane.phase === "post_pr_feedback") return true
   if (lane.planning !== "required" || event.reviewKind !== "code") return true
   return event.iteration === lane.currentIteration
 }
 
 function hasNextIteration(lane, event) {
+  if (lane.phase === "post_pr_feedback") return false
   return event.reviewKind === "code" && lane.currentIteration < lane.iterationCount
 }
 
