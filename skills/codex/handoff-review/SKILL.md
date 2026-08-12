@@ -40,6 +40,15 @@ When an AoE/TARS coordinator asks for a code review, it supplies the path to
 an `implementation-response` and its immutable `head_commit`. Read that
 handoff, review exactly that commit, and do not edit implementation files.
 
+Treat the implementation response's `Verification` section as review evidence.
+In repositories where the handoff states that lefthook gates every commit,
+successful test, lint, and Biome checks there are the baseline validation for
+that commit: inspect the recorded commands and results, but do not routinely
+rerun the same broad checks. Run a focused check only when validation is
+missing, failed or does not cover the changed risk, or when the review finds a
+specific behavior that needs confirmation. Record any additional validation in
+the verdict.
+
 Write exactly one `code-review` handoff to `.agent-handoff/inbox/`. Copy
 `workflow_id` and `round` unchanged from the implementation response, set
 `responds_to` to its `id`, and set `outcome` to exactly one of `approved`,
