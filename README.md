@@ -29,6 +29,7 @@ git clone https://github.com/satwikhebbar/tars.git
 cd tars
 
 node skills/install.mjs codex handoff-review --force
+node skills/install.mjs codex add-to-backlog --force
 node skills/install.mjs opencode handoff-review --force
 node skills/install.mjs opencode issue-kickoff --force
 node skills/install.mjs opencode address-pr-feedback --force
