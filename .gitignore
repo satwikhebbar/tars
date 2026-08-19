@@ -5,3 +5,6 @@ dist/
 *.sqlite-wal
 .env
 .DS_Store
+.agent-handoff/*
+!.agent-handoff/.gitkeep
+!.agent-handoff/README.md
