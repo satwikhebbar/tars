@@ -30,25 +30,31 @@ environment where AoE launches agent sessions:
 
 ## One-time setup
 
-Clone TARS and install the skills and command used by fresh agent sessions:
+Clone TARS, then install the default TARS skills and command for fresh agent
+sessions with one command:
 
 ```bash
 git clone https://github.com/satwikhebbar/tars.git
 cd tars
 
-node skills/install.mjs codex handoff-review --force
-node skills/install.mjs codex add-to-backlog --force
-node skills/install.mjs opencode handoff-review --force
-node skills/install.mjs opencode issue-kickoff --force
-node skills/install.mjs opencode address-pr-feedback --force
-node commands/install.mjs opencode tars-build --force
+node setup.mjs
 ```
 
-Install any other OpenCode skills your project uses in the same way, for
-example `close-issue` or `add-to-backlog`. The installer copies a version into
-the agent's global configuration, so re-run it after pulling future skill
-updates. Start new AoE sessions after an update; an already-running agent may
-still have its earlier skill instructions in context.
+To install skills selectively, use the skill installer directly:
+
+```bash
+# Install or update one Codex skill.
+node skills/install.mjs codex handoff-review --force
+
+# Install an additional OpenCode skill used by your project.
+node skills/install.mjs opencode close-issue --force
+```
+
+`setup.mjs` updates the default TARS-managed skills and command each time it
+runs. Selective installers copy skills into the agent's global configuration,
+so use `--force` when updating one that is already installed. Start new AoE
+sessions after an update; an already-running agent may still have its earlier
+skill instructions in context.
 
 ## Start using TARS
 
