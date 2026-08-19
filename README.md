@@ -10,14 +10,22 @@ the approved branch is ready for a pull request.
 
 ## Prerequisites
 
-- A recent Node.js runtime with `node:sqlite`.
-- AoE installed and usable as `aoe`; its tmux-backed sessions must be able to
+Before continuing, make sure the following commands are available in the
+environment where AoE launches agent sessions:
+
+- A recent [Node.js runtime](https://nodejs.org/en/download) with `node:sqlite`
+  support.
+- [tmux](https://github.com/tmux/tmux/wiki/Installing) and
+  [Agent of Empires (AoE)](https://github.com/agent-of-empires/agent-of-empires/blob/main/docs/installation.md)
+  installed and usable as `aoe`. AoE's tmux-backed sessions must be able to
   launch both `opencode` and `codex` from their environment.
-- OpenCode and Codex installed and authenticated. If Codex comes from the
-  ChatGPT desktop app, expose its executable on `PATH` before launching AoE.
-- GitHub CLI (`gh`) authenticated for the target project; `lane start` reads
-  the issue title and body.
-- A target repository whose OpenCode global skills describe how to work its
+- [OpenCode](https://opencode.ai/docs) and
+  [Codex](https://learn.chatgpt.com/docs/codex/cli) installed and authenticated.
+  If Codex comes from the ChatGPT desktop app, expose its executable on `PATH`
+  before launching AoE.
+- [GitHub CLI (`gh`)](https://cli.github.com/manual/) authenticated for the
+  target project; `lane start` reads the issue title and body.
+- A target Git repository whose OpenCode global skills describe how to work its
   issues (for example, its issue-kickoff workflow).
 
 ## One-time setup
