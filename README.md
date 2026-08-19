@@ -98,29 +98,37 @@ create a second implementer session for the same lane.
 
 ## Review-loop lifecycle
 
-```text
-Plan-first lane
+```mermaid
+flowchart TD
+  subgraph plan_first["Plan-first lane"]
+    plan["OpenCode writes a plan"] --> plan_handoff["Plan-review handoff"]
+    plan_handoff --> plan_review["Codex reviews the plan"]
+    plan_review --> plan_approved["Approved verdict + iteration schedule"]
+    plan_approved --> start_iteration["TARS starts iteration 1 in Build mode"]
+    start_iteration --> build["OpenCode commits an implementation response"]
+    build --> code_review["Codex reviews the code"]
+    code_review -->|"Changes requested"| revise["OpenCode revises the same iteration"]
+    revise --> build
+    code_review -->|"Approved; more iterations remain"| next_iteration["TARS starts the next iteration"]
+    next_iteration --> build
+    code_review -->|"Final approval"| create_pr["OpenCode pushes the branch and creates a PR"]
+  end
 
-OpenCode plan → plan-review handoff → Codex plan review
-  → approved verdict + ordered iteration schedule
-  → TARS compacts OpenCode and starts iteration 1 in Build mode
-  → commit + implementation-response → Codex code review
-      → changes requested: revise and re-review the same iteration
-      → approved before final iteration: TARS starts the next iteration
-      → final approval: OpenCode pushes the branch and creates the PR
+  subgraph direct_build["Direct-build lane"]
+    direct_commit["OpenCode commits an implementation response"] --> direct_review["Codex reviews the code"]
+    direct_review -->|"Changes requested"| direct_revise["OpenCode revises and commits"]
+    direct_revise --> direct_commit
+    direct_review -->|"Approved"| direct_pr["OpenCode pushes the branch and creates a PR"]
+  end
 
-Direct-build lane
-
-OpenCode commit → implementation-response → Codex code review
-  → changes requested: revise, commit, and repeat
-  → approved: OpenCode pushes the branch and creates the PR
-
-Existing PR feedback
-
-You ask OpenCode to use `address-pr-feedback` → it commits a marked follow-up
-handoff → TARS reopens only that approved lane for Codex review
-  → changes requested: normal repair/review loop
-  → approved: OpenCode pushes the reviewed follow-up to the existing PR
+  subgraph pr_feedback["Existing PR feedback"]
+    feedback["Ask OpenCode to use address-pr-feedback"] --> follow_up["OpenCode commits a marked follow-up handoff"]
+    follow_up --> reopen["TARS reopens the approved lane for Codex review"]
+    reopen --> feedback_review["Codex reviews the follow-up"]
+    feedback_review -->|"Changes requested"| feedback_revise["OpenCode repairs and commits"]
+    feedback_revise --> follow_up
+    feedback_review -->|"Approved"| feedback_push["OpenCode pushes the follow-up to the existing PR"]
+  end
 ```
 
 Codex uses an approved plan verdict to recommend the smallest sensible set of
