@@ -28,8 +28,8 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
   const dispatched = state.dispatchedEvents(worktreePath)
   const sessions = await aoe.listSessions()
   const runtime = await aoe.runtimeSessions({ includeDead: true })
-  const opencode = sessionInfo(sessions, runtime, lane.opencodeSessionId)
-  const codex = sessionInfo(sessions, runtime, lane.codexSessionId)
+  const opencode = sessionInfo(lane.worktreePath, sessions, runtime, lane.opencodeSessionId, "opencode")
+  const codex = sessionInfo(lane.worktreePath, sessions, runtime, lane.codexSessionId, "codex")
 
   const analysis = {
     worktreePath,
@@ -53,11 +53,14 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     return finish("no_action", "delivery complete: approved lane has no pending reopen")
   }
 
-  const missing = []
-  if (!opencode.exists) missing.push("opencode")
-  if (!codex.exists) missing.push("codex")
-  if (missing.length)
-    return finish("sessions_missing", `registered ${missing.join(" and ")} session no longer exists in AoE`)
+  const unusable = []
+  if (!opencode.exists) {
+    unusable.push(`opencode (${opencode.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
+  }
+  if (!codex.exists) {
+    unusable.push(`codex (${codex.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
+  }
+  if (unusable.length) return finish("sessions_missing", `registered ${unusable.join(" and ")} session cannot be used`)
 
   const inactive = [
     ["opencode", opencode],
@@ -205,22 +208,39 @@ async function recreateMissingSessions({ aoe, state, lane }) {
   const sessions = await aoe.listSessions()
   const suffix = lane.worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
   const updated = { ...lane }
-  if (!sessions.some((session) => session.id === lane.opencodeSessionId)) {
+  const opencodeValid = sessions.some(
+    (session) =>
+      session.id === lane.opencodeSessionId && session.path === lane.worktreePath && session.tool === "opencode",
+  )
+  const codexValid = sessions.some(
+    (session) => session.id === lane.codexSessionId && session.path === lane.worktreePath && session.tool === "codex",
+  )
+  if (!opencodeValid) {
     const opencode = await aoe.addSession(lane.worktreePath, "opencode", `Review loop OpenCode resume (${suffix})`)
     updated.opencodeSessionId = opencode.id
   }
-  if (!sessions.some((session) => session.id === lane.codexSessionId)) {
+  if (!codexValid) {
     const codex = await aoe.addSession(lane.worktreePath, "codex", `Review loop Codex resume (${suffix})`)
     updated.codexSessionId = codex.id
   }
   state.saveLane(updated)
 }
 
-function sessionInfo(sessions, runtime, sessionId) {
-  const exists = sessions.some((session) => session.id === sessionId)
+function sessionInfo(worktreePath, sessions, runtime, sessionId, tool) {
+  const registered = sessions.find((session) => session.id === sessionId)
+  const status = !registered
+    ? "missing"
+    : registered.path !== worktreePath || registered.tool !== tool
+      ? "mismatched"
+      : "ok"
   const entry = runtime.find((entry) => entry.session === sessionId)
-  const activity = !exists ? "missing" : entry ? String(entry.state).toLowerCase() : "unknown"
-  return { id: sessionId, exists, activity, substrate: entry?.substrate }
+  return {
+    id: sessionId,
+    exists: status === "ok",
+    status,
+    activity: status === "ok" ? (entry ? String(entry.state).toLowerCase() : "unknown") : status,
+    substrate: entry?.substrate,
+  }
 }
 
 function targetSession(lane, event) {

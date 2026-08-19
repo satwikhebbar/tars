@@ -175,6 +175,81 @@ test("a missing registered session reports sessions_missing and --create-session
   fixture.state.close()
 })
 
+test("a session id reused by another worktree reports sessions_missing and is replaced only by --create-sessions", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  fixture.aoe.sessions.find((session) => session.id === "codex-1").path = "/other/worktree"
+
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "sessions_missing")
+  assert.match(analysis.reasons[0], /reused by another worktree or tool/)
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  await assert.rejects(
+    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    /Refusing --dispatch: verdict is sessions_missing/,
+  )
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  const result = await resumeLane({
+    aoe: fixture.aoe,
+    state: fixture.state,
+    worktreePath: fixture.worktree,
+    createSessions: true,
+    dispatch: true,
+  })
+  const codexSession = fixture.aoe.sessions.find((session) => session.id === "codex-new-1")
+  assert.equal(codexSession.tool, "codex")
+  assert.equal(codexSession.path, fixture.worktree)
+  assert.equal(fixture.state.lane(fixture.worktree).codexSessionId, "codex-new-1")
+  assert.deepEqual(
+    fixture.aoe.sent.map((entry) => entry.sessionId),
+    ["codex-new-1"],
+  )
+  assert.equal(result.action.action, "sent:codex")
+  fixture.state.close()
+})
+
+test("a session id reused by the wrong tool reports sessions_missing and never dispatches to it", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  fixture.aoe.sessions.find((session) => session.id === "codex-1").tool = "opencode"
+
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "sessions_missing")
+  assert.match(analysis.reasons[0], /reused by another worktree or tool/)
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  await assert.rejects(
+    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    /Refusing --dispatch: verdict is sessions_missing/,
+  )
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  const result = await resumeLane({
+    aoe: fixture.aoe,
+    state: fixture.state,
+    worktreePath: fixture.worktree,
+    createSessions: true,
+    dispatch: true,
+  })
+  assert.equal(fixture.state.lane(fixture.worktree).codexSessionId, "codex-new-1")
+  assert.deepEqual(
+    fixture.aoe.sent.map((entry) => entry.sessionId),
+    ["codex-new-1"],
+  )
+  assert.equal(result.action.action, "sent:codex")
+  fixture.state.close()
+})
+
 test("--create-sessions refuses when the verdict is not sessions_missing", async () => {
   const fixture = await laneFixture()
   await assert.rejects(
