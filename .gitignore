@@ -7,4 +7,6 @@ dist/
 .DS_Store
 
 # Local agent handoff queues
-.agent-handoff/
+.agent-handoff/*
+!.agent-handoff/.gitkeep
+!.agent-handoff/README.md

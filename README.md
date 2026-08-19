@@ -175,6 +175,9 @@ node automations/review-loop/cli.mjs lane close --issue 44
 
 # Abort only after both registered AoE panes have been stopped and are dead.
 node automations/review-loop/cli.mjs lane close --issue 44 --force
+
+# Diagnose a stuck or interrupted lane from durable handoffs and session liveness (read-only).
+node automations/review-loop/cli.mjs lane resume --issue 44
 ```
 
 See the [review-loop reference](automations/review-loop/README.md) for all
