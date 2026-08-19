@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TARS: Safe Lane Resume and Recovery</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.55; }
+  h1 { border-bottom: 2px solid #8884; padding-bottom: .4rem; }
+  h2 { margin-top: 2rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #8886; padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #8882; }
+  code { background: #8882; padding: .1em .35em; border-radius: 4px; font-size: .92em; }
+  pre { background: #0001; border: 1px solid #8884; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+  .callout { border-left: 4px solid #888; background: #8881; padding: .6rem 1rem; border-radius: 0 6px 6px 0; }
+</style>
+</head>
+<body>
+
+<h1>TARS: Safe Lane Resume and Recovery</h1>
+
+<p><strong>Issue #1</strong> — the coordinator can record a prompt delivery before an agent ever works it,
+and an interrupted or outdated coordinator can leave a lane with incomplete or stale state. Operators
+need an evidence-based way to know whether a lane <em>needs action</em>, <em>is already progressing</em>,
+<em>has completed delivery</em>, or <em>requires sessions to be re-created</em> — and to resume it only with
+explicit intent.</p>
+
+<h2>Problem details</h2>
+<ul>
+  <li><code>ReviewLoopCoordinator.processLane</code> (automations/review-loop/lib/coordinator.mjs) checks a session is
+  <em>currently</em> idle before sending, then journals the event key in <code>dispatched_events</code>. The journal is
+  append-only idempotency, but a delivery can still be recorded without the agent acting (session dies after the check,
+  watcher interrupted mid-send, blank re-created session never prompted). Nothing ever re-examines those records.</li>
+  <li>The only today-view is <code>status</code> (one line per lane) or raw SQLite reads. There is no command that derives
+  the next pending action from durable handoff files + lane state + AoE session liveness.</li>
+  <li>Goals: identify the next pending action, avoid duplicate agent work, report ambiguity / inactive sessions clearly,
+  and gate any dispatched recovery action behind explicit operator intent.</li>
+</ul>
+
+<h2>Design overview</h2>
+<p>Add a <strong>read-only analysis</strong> plus an <strong>explicitly-gated recovery</strong> as one command:</p>
+
+<pre><code>node automations/review-loop/cli.mjs lane resume (--worktree &lt;path&gt; | --issue &lt;number&gt;) [--dispatch] [--create-sessions]</code></pre>
+
+<div class="callout">
+<strong>No flags = pure diagnosis.</strong> It never sends prompts, never mutates state, never touches AoE sessions.
+Action flags (<code>--dispatch</code>, <code>--create-sessions</code>) each enable exactly one recovery action and only when
+the verdict supports it; otherwise the command refuses with the reason and a non-zero exit.
+</div>
+
+<p>Implementation is additive: a new <code>lib/recovery.mjs</code>, two small read helpers on
+<code>StateStore</code>, three existing coordinator helpers promoted to named exports (no behavior change), a new CLI
+subcommand, tests, and docs.</p>
+
+<h2>Verdict model</h2>
+<p><code>analyzeLane</code> returns exactly one verdict plus reasons and, when determinable, the single next event.</p>
+
+<table>
+  <tr><th>Verdict</th><th>Meaning</th><th>Recovery allowed</th></tr>
+  <tr><td><code>blocked</code></td><td>Lane state is <code>blocked</code>, or an undispatched event exceeds <code>max_rounds</code> (coordinator would block).</td><td>none</td></tr>
+  <tr><td><code>no_action</code></td><td>Nothing pending: delivery complete (approved lane, no reopen), or healthy lane awaiting the agent's next handoff.</td><td>none</td></tr>
+  <tr><td><code>needs_dispatch</code></td><td>Exactly one actionable pending event (undispatched, in round/iteration limits) whose target session is idle/waiting.</td><td><code>--dispatch</code></td></tr>
+  <tr><td><code>stale_delivery</code></td><td>A previously recorded delivery has no advancement evidence, the target session is idle/waiting, and it is older than a staleness threshold. The recorded delivery likely never took effect.</td><td><code>--dispatch</code> (clears the stale journal marker first, then re-dispatches)</td></tr>
+  <tr><td><code>in_flight</code></td><td>Already progressing: the target session is busy/running, or a recent dispatch (<em>or the compacting transition</em>) still has no completion — do nothing, avoid duplicate work.</td><td>none</td></tr>
+  <tr><td><code>sessions_missing</code></td><td>A registered OpenCode/Codex session id no longer exists in AoE; the lane cannot advance until re-created.</td><td><code>--create-sessions</code> (then re-analyze)</td></tr>
+  <tr><td><code>inactive_sessions</code></td><td>Sessions exist but are dead or have no runtime record — dispatch would be futile and unsafe.</td><td>none (operator stops/removes via AoE, then <code>--create-sessions</code>)</td></tr>
+  <tr><td><code>ambiguous</code></td><td>Multiple actionable pending events, multiple unconfirmed deliveries, or lane state contradicts handoff evidence. List all candidates; never guess.</td><td>none</td></tr>
+</table>
+
+<p><strong>Staleness threshold:</strong> a dispatched event older than <code>STALE_AFTER_MS</code> (10 minutes) with an idle
+target session and no advancement is reported as <code>stale_delivery</code>; younger than that it is reported as
+<code>in_flight</code> (plausibly being worked). The timestamp comes from the existing <code>dispatched_events.created_at</code> column.</p>
+
+<h2>Evidence sources and analysis steps</h2>
+<ol>
+  <li><strong>Handoffs</strong> — <code>handoffsFor</code> (inbox + done) for actionable events, exactly mirroring the coordinator;
+  additionally read <code>in-progress</code> and <code>archive</code> for <em>advancement evidence</em>.</li>
+  <li><strong>Lane row</strong> — <code>state</code>, <code>phase</code>, <code>currentIteration</code>, <code>iterationCount</code>, <code>maxRounds</code>, transition fields.</li>
+  <li><strong>Journal</strong> — the <code>dispatched_events</code> keys and their <code>created_at</code> timestamps.</li>
+  <li><strong>AoE</strong> — <code>listSessions</code> (registered ids still exist?) and <code>runtimeSessions({includeDead:true})</code> (idle / waiting / running / dead).</li>
+</ol>
+
+<p>Ordered decision procedure (first match wins):</p>
+<ol>
+  <li>Lane <code>blocked</code> → <code>blocked</code>. Lane <code>approved</code> with no <code>reopen</code> event → <code>no_action</code>.</li>
+  <li>Registered session id(s) absent from <code>listSessions</code> → <code>sessions_missing</code> (name the missing role).</li>
+  <li>Undispatched event over <code>max_rounds</code> (within iteration) → <code>blocked</code> (max_rounds).</li>
+  <li>Multiple actionable pending events → <code>ambiguous</code> (list them). Exactly one → inspect its target session:
+  dead → <code>inactive_sessions</code>; busy → <code>in_flight</code>; idle/waiting → <code>needs_dispatch</code>.</li>
+  <li>No pending events. Inspect dispatched-but-unconfirmed events (no advancement):
+  none → <code>no_action</code>; &gt;1 → <code>ambiguous</code>; exactly one, older than threshold + target idle → <code>stale_delivery</code>;
+  busy → <code>in_flight</code>; recent → <code>in_flight</code>; dead → <code>inactive_sessions</code>.</li>
+  <li><code>phase === "compacting"</code> anywhere → <code>in_flight</code> (the coordinator's plan→build transition owns it; a watcher pass advances it).</li>
+  <li>Contradiction (lane state claims <code>reviewing</code>/<code>implementing</code> but no handoff or journal evidence exists)
+  → <code>ambiguous</code> with the contradiction listed.</li>
+</ol>
+
+<p><strong>Advancement</strong> for event E (workflow W, round R): any handoff with <code>workflow_id === W</code> and
+(<code>round &gt; R</code> or <code>responds_to === E.id</code>), anywhere in the queue. This is the evidence that the lane actually
+moved past the recorded delivery.</p>
+
+<h2>Recovery actions</h2>
+<ul>
+  <li><code>--dispatch</code> (verdicts <code>needs_dispatch</code>, <code>stale_delivery</code>):
+  for <code>stale_delivery</code>, first delete that event's <code>dispatched_events</code> row (the operator's explicit retry intent),
+  then run exactly one <code>ReviewLoopCoordinator.processLane(lane)</code> pass. <code>processLane</code> dispatches at most one
+  event per call (every branch ends in <code>break</code>), so this is exactly one prompt, through the same code path the watcher uses —
+  no duplicated prompt-building logic, and the normal state transitions apply. If the pass produces no action, report why.</li>
+  <li><code>--create-sessions</code> (verdict <code>sessions_missing</code>): re-add only the missing role via
+  <code>AoeClient.addSession</code>, re-register the new id in the lane row, then re-analyze. Never overwrite a session id that
+  still exists. Combined with <code>--dispatch</code>, a newly-created (blank) OpenCode session can then receive the pending prompt
+  directly. A re-created session is blank; the report notes the operator may need to rebuild agent context manually for non-event work.</li>
+</ul>
+
+<div class="callout"><strong>Safety guarantees</strong>: dispatch only to idle/waiting sessions; never auto-recreate without
+<code>--create-sessions</code>; never dispatch without <code>--dispatch</code>; re-dispatch only after an explicit marker clear;
+multiple candidates → <code>ambiguous</code> refusal.</div>
+
+<h2>File changes</h2>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td class="mono">automations/review-loop/lib/recovery.mjs</td><td><strong>New.</strong> <code>analyzeLane</code> (read-only), <code>resumeLane</code> (gated actions), evidence helpers (read all queue dirs, advancement check, session liveness), verdict printing.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/state.mjs</td><td>Add <code>dispatchedEvents(worktreePath)</code> → Map(eventKey → createdAt), and <code>clearDispatched(worktreePath, eventKey)</code>.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/coordinator.mjs</td><td>Export <code>classifyEvent</code>, <code>matchesCurrentIteration</code>, <code>compareEvents</code> (named exports; no logic change).</td></tr>
+  <tr><td class="mono">automations/review-loop/cli.mjs</td><td>Add <code>lane resume</code> subcommand (options <code>--worktree</code>/<code>--issue</code>, <code>--dispatch</code>, <code>--create-sessions</code>), usage line.</td></tr>
+  <tr><td class="mono">automations/review-loop/README.md</td><td>Document the command, verdicts, and the read-only default.</td></tr>
+  <tr><td class="mono">.gitignore</td><td>Ignore the <code>.agent-handoff/</code> queue (documented protocol says queue contents stay out of git; keeps recovery evidence and published handoffs from being committed).</td></tr>
+  <tr><td class="mono">automations/review-loop/test/recovery.test.mjs</td><td><strong>New.</strong> node:test suite (below).</td></tr>
+</table>
+
+<h2>Tests</h2>
+<p>Run: <code class="mono">node --test automations/review-loop/test/*.test.mjs</code>. Recovery tests use a temp SQLite
+<code>StateStore</code>, a <code>FakeAoe</code> (listSessions / runtimeSessions / runningSessions / send), and real handoff files in a temp worktree — same fixtures as the coordinator suite.</p>
+<ul>
+  <li>approved lane with no reopen event → <code>no_action</code>; blocked lane → <code>blocked</code>.</li>
+  <li>single pending implementation-response, Codex idle → <code>needs_dispatch</code>; <code>--dispatch</code> sends to Codex exactly once and journals it.</li>
+  <li>two pending events → <code>ambiguous</code>, <code>--dispatch</code> refuses.</li>
+  <li>dispatched event, no advancement, Codex idle, journal old → <code>stale_delivery</code>; <code>--dispatch</code> clears the marker and re-sends exactly once.</li>
+  <li>dispatched event, no advancement, Codex busy → <code>in_flight</code>; <code>--dispatch</code> refuses (no duplicate work).</li>
+  <li>registered Codex session absent → <code>sessions_missing</code>; <code>--create-sessions</code> adds and re-registers it; combined <code>--dispatch</code> sends the pending prompt.</li>
+  <li>Codex runtime dead → <code>inactive_sessions</code>; <code>--dispatch</code> refuses.</li>
+  <li>fresh registered lane, no handoffs → <code>no_action</code> (awaiting agent).</li>
+  <li>round beyond <code>max_rounds</code> undispatched → <code>blocked</code> (max_rounds).</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Auto-fixing a <em>dead but existing</em> session; the operator removes it via AoE and recovery then re-creates it with <code>--create-sessions</code>.</li>
+  <li>Rebuilding an agent's working context inside a blank re-created session beyond dispatching the pending event.</li>
+  <li>Changing the watcher's normal dispatch path or the handoff protocol.</li>
+</ul>
+
+</body>
+</html>
