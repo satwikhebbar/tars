@@ -12,6 +12,7 @@ import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneMaxRounds, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
+import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
@@ -33,6 +34,7 @@ async function main() {
       interval: { type: "string" },
       "max-rounds": { type: "string" },
       "create-sessions": { type: "boolean", default: false },
+      dispatch: { type: "boolean", default: false },
       repo: { type: "string" },
       issue: { type: "string" },
       branch: { type: "string" },
@@ -64,6 +66,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
     else if (command === "lane" && positionals[1] === "set-max-rounds") await setMaxRounds({ values, state })
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
+    else if (command === "lane" && positionals[1] === "resume") await resume({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
@@ -188,6 +191,23 @@ function explicitPair(values) {
   return null
 }
 
+async function resume({ values, state }) {
+  if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
+  if (!values.worktree && !values.issue) throw new Error("lane resume requires --worktree <path> or --issue <number>")
+  const worktreePath = values.worktree
+    ? await realpath(values.worktree)
+    : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
+  const result = await resumeLane({
+    aoe: new AoeClient(),
+    state,
+    worktreePath,
+    dispatch: values.dispatch,
+    createSessions: values["create-sessions"],
+  })
+  console.log(formatAnalysis(result.analysis))
+  if (result.action) console.log(`dispatched: ${result.action.action} ${result.action.event.handoff.metadata.id}`)
+}
+
 async function selectPair(aoe, worktreePath, values, roles) {
   const explicit = explicitPair(values)
   if (explicit) return explicit
@@ -238,6 +258,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
   node automations/review-loop/cli.mjs lane set-max-rounds --worktree <path> --max-rounds <number>
   node automations/review-loop/cli.mjs lane recover --worktree <path> --role author|reviewer
+  node automations/review-loop/cli.mjs lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   node automations/review-loop/cli.mjs status`)
 }
 

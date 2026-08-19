@@ -210,7 +210,7 @@ async function planVerdictPathFor(lane) {
   throw new Error(`Cannot find approved plan verdict ${lane.planVerdictId} for ${lane.worktreePath}.`)
 }
 
-function classifyEvent(handoff) {
+export function classifyEvent(handoff) {
   const { metadata } = handoff
   if (metadata.type === "plan-review" && ["author", "opencode"].includes(metadata.created_by) && !metadata.outcome) {
     return {
@@ -279,7 +279,7 @@ function classifyEvent(handoff) {
   return null
 }
 
-function compareEvents(left, right) {
+export function compareEvents(left, right) {
   return left.round - right.round || left.key.localeCompare(right.key)
 }
 
@@ -325,7 +325,7 @@ function iterationFor(metadata) {
   return Number.isInteger(metadata.iteration) && metadata.iteration > 0 ? metadata.iteration : 1
 }
 
-function matchesCurrentIteration(lane, event) {
+export function matchesCurrentIteration(lane, event) {
   if (event.reopensLane || lane.phase === "post_pr_feedback") return true
   if (lane.planning !== "required" || event.reviewKind !== "code") return true
   return event.iteration === lane.currentIteration

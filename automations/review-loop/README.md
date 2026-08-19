@@ -139,6 +139,49 @@ explicitly tell the recovered harness what to do next after inspecting the
 reported lane state. `--worktree` is required because issue numbers can collide
 across repositories.
 
+## Safe lane resume and recovery
+
+An interrupted watcher, a restarted machine, or a session that dies after a
+prompt is recorded can leave a lane with recorded-but-unprocessed deliveries or
+stale state. `lane resume` diagnoses a lane from durable evidence — handoff
+files, the persisted lane row, the dispatch journal, and AoE session liveness —
+and takes a recovery action only when the operator asks for it explicitly:
+
+```bash
+node automations/review-loop/cli.mjs lane resume --worktree /absolute/path/to/worktree
+```
+
+Without action flags this is read-only: it prints a verdict and the single next
+pending action (or why none can be taken). It never sends prompts and never
+mutates state. Action flags each enable exactly one recovery action and are
+refused for any other verdict:
+
+```bash
+# Dispatch the single pending next action to its idle session.
+node automations/review-loop/cli.mjs lane resume --worktree <path> --dispatch
+
+# Re-create a registered OpenCode/Codex session that no longer exists, then re-analyze.
+node automations/review-loop/cli.mjs lane resume --worktree <path> --create-sessions
+```
+
+Verdicts:
+
+| Verdict | Meaning | Recovery |
+|---|---|---|
+| `needs_dispatch` | One actionable pending handoff; target session is idle/waiting. | `--dispatch` |
+| `stale_delivery` | A recorded delivery has no advancement, its session is idle, and it is older than 10 minutes — the prompt likely never took effect. | `--dispatch` (re-journals and re-dispatches once) |
+| `in_flight` | Already progressing: target session is busy, or a recent delivery/compact transition is waiting. | none |
+| `no_action` | Nothing pending — delivery complete, or the lane is awaiting the agent's next handoff. | none |
+| `sessions_missing` | A registered session id no longer exists in AoE. | `--create-sessions` |
+| `inactive_sessions` | A session is dead or has no runtime record. | none (stop/remove via AoE, then `--create-sessions`) |
+| `ambiguous` | Multiple pending events, multiple unconfirmed deliveries, or state contradicts the handoff evidence. All candidates are listed; nothing is guessed. | none |
+| `blocked` | Lane state is blocked, or an event exceeds `max_rounds`. | none |
+
+Dispatch goes through the same `processLane` path as the watcher, so exactly
+one prompt is sent per `--dispatch`, the normal state transitions apply, and
+already-dispatched events are never re-sent unless the delivery is
+`stale_delivery` and the operator chose to retry it.
+
 ## Protocol additions
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.

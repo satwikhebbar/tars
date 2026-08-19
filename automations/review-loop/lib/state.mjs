@@ -166,6 +166,21 @@ export class StateStore {
       .prepare("INSERT OR IGNORE INTO dispatched_events (worktree_path, event_key, created_at) VALUES (?, ?, ?)")
       .run(worktreePath, eventKey, new Date().toISOString())
   }
+
+  /** Returns dispatched event keys and their recorded delivery timestamps. */
+  dispatchedEvents(worktreePath) {
+    const rows = this.database
+      .prepare("SELECT event_key, created_at FROM dispatched_events WHERE worktree_path = ?")
+      .all(worktreePath)
+    return new Map(rows.map((row) => [row.event_key, row.created_at]))
+  }
+
+  /** Removes one recorded delivery so an operator-approved retry can re-dispatch it. */
+  clearDispatched(worktreePath, eventKey) {
+    this.database
+      .prepare("DELETE FROM dispatched_events WHERE worktree_path = ? AND event_key = ?")
+      .run(worktreePath, eventKey)
+  }
 }
 
 function toLane(row) {
