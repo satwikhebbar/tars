@@ -86,8 +86,11 @@ node automations/review-loop/cli.mjs lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
   --planning always \
-  --plan-model <provider/model>
+  --plan-model deepseek/deepseek-v4-pro
 ```
+
+Use a provider/model identifier understood by OpenCode, such as
+`deepseek/deepseek-v4-pro`.
 
 TARS prints the worktree path, OpenCode session ID, Codex session ID, and
 branch. Use AoE's normal tmux interface to observe either session; do not
