@@ -172,7 +172,7 @@ Verdicts:
 | `stale_delivery` | A recorded delivery has no advancement, its session is idle, and it is older than 10 minutes — the prompt likely never took effect. | `--dispatch` (re-journals and re-dispatches once) |
 | `in_flight` | Already progressing: target session is busy, or a recent delivery/compact transition is waiting. | none |
 | `no_action` | Nothing pending — delivery complete, or the lane is awaiting the agent's next handoff. | none |
-| `sessions_missing` | A registered session id no longer exists in AoE. | `--create-sessions` |
+| `sessions_missing` | A registered session is absent from AoE, or its id no longer matches the lane's worktree and role. | `--create-sessions` |
 | `inactive_sessions` | A session is dead or has no runtime record. | none (stop/remove via AoE, then `--create-sessions`) |
 | `ambiguous` | Multiple pending events, multiple unconfirmed deliveries, or state contradicts the handoff evidence. All candidates are listed; nothing is guessed. | none |
 | `blocked` | Lane state is blocked, or an event exceeds `max_rounds`. | none |
