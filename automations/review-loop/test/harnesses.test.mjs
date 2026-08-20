@@ -15,6 +15,7 @@ test("normalizes defaults and resolves custom AoE-backed harnesses", async () =>
   const config = await loadHarnessConfig(path)
   assert.equal(resolveHarness(config, "pi").tool, "pi")
   assert.equal(resolveHarness(config, "claude").displayName, "Claude Code")
+  assert.deepEqual(resolveHarness(config, "codex").launchArgs, ["--approve-for-me"])
   assert.throws(() => resolveHarness(config, "missing"), /Unknown TARS harness/)
 })
 

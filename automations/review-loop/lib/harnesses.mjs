@@ -7,7 +7,7 @@ import { promisify } from "node:util"
 const execFileAsync = promisify(execFile)
 export const BUILTIN_HARNESSES = Object.freeze({
   opencode: { key: "opencode", tool: "opencode", displayName: "OpenCode" },
-  codex: { key: "codex", tool: "codex", displayName: "Codex" },
+  codex: { key: "codex", tool: "codex", displayName: "Codex", launchArgs: ["--approve-for-me"] },
   claude: { key: "claude", tool: "claude", displayName: "Claude Code" },
   cursor: { key: "cursor", tool: "cursor", displayName: "Cursor" },
 })
@@ -41,7 +41,7 @@ export function normalizeConfig(config = {}) {
 export function resolveHarness(config, key) {
   const harness = BUILTIN_HARNESSES[key] ?? config.harnesses?.[key]
   if (!harness?.tool || typeof harness.tool !== "string") throw new Error(`Unknown TARS harness: ${key}`)
-  return { key, tool: harness.tool, displayName: harness.displayName ?? key }
+  return { key, tool: harness.tool, displayName: harness.displayName ?? key, launchArgs: harness.launchArgs ?? [] }
 }
 
 /** Parses the human-readable AoE inventory without assuming a JSON flag. */

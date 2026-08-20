@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
+import { createPair, discoverPair, findActiveWorktreeSession, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
 
@@ -39,6 +39,17 @@ test("waits for visible terminal content before treating a new session as ready"
     sleep: async (milliseconds) => waits.push(milliseconds),
   })
   assert.deepEqual(waits, [1, 500])
+})
+
+test("does not reuse a trashed worktree session", () => {
+  const session = findActiveWorktreeSession([
+    { id: "trashed", tool: "codex", path: "/repo-worktrees/.aoe-trash/trashed", worktree: { branch: "issue/3", main_repo_path: "/repo/" } },
+    { id: "live", tool: "codex", path: "/repo-worktrees/issue-3", worktree: { branch: "issue/3", main_repo_path: "/repo/" } },
+  ], "/repo", "issue/3", "codex")
+  assert.equal(session.id, "live")
+  assert.equal(findActiveWorktreeSession([
+    { id: "trashed", tool: "codex", path: "/repo-worktrees/.aoe-trash/trashed", worktree: { branch: "issue/3", main_repo_path: "/repo/" } },
+  ], "/repo", "issue/3", "codex"), undefined)
 })
 
 function sessions() {

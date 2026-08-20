@@ -38,9 +38,11 @@ export class AoeClient {
     await execFileAsync(this.command, args)
   }
 
-  async addSession(worktreePath, tool, title) {
+  async addSession(worktreePath, tool, title, { extraArgs = [] } = {}) {
     const before = await this.listSessions()
-    await execFileAsync(this.command, ["add", worktreePath, "--tool", tool, "--title", title])
+    const args = ["add", worktreePath, "--tool", tool, "--title", title]
+    if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
+    await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
     return session
@@ -125,6 +127,20 @@ export async function waitForSessionReady(client, sessionId, options = {}) {
   throw new Error(`AoE session ${sessionId} did not become ready within ${timeoutMs}ms${detail}`)
 }
 
+/** Returns the live AoE session for a managed worktree, never a trashed record. */
+export function findActiveWorktreeSession(sessions, repoPath, branch, tool) {
+  const normalizedRepoPath = `${repoPath.replace(/\/$/, "")}/`
+  const matching = sessions.filter(
+    (session) =>
+      session.tool === tool &&
+      session.worktree?.branch === branch &&
+      session.worktree?.main_repo_path === normalizedRepoPath &&
+      !session.path?.includes("/.aoe-trash/"),
+  )
+  if (matching.length > 1) throw new Error(`Found ${matching.length} existing ${tool} sessions for branch ${branch}.`)
+  return matching[0]
+}
+
 /** Locates exactly one explicitly role-bound session pair in a worktree. */
 export async function discoverPair(client, worktreePath, roles) {
   const legacyShape = !roles
@@ -166,7 +182,7 @@ export async function createPair(client, worktreePath, roles) {
   const legacyShape = !roles
   roles ??= { author: { tool: "opencode", displayName: "OpenCode" }, reviewer: { tool: "codex", displayName: "Codex" } }
   const suffix = worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
-  await client.addSession(worktreePath, roles.author.tool, `TARS author (${suffix})`)
-  await client.addSession(worktreePath, roles.reviewer.tool, `TARS reviewer (${suffix})`)
+  await client.addSession(worktreePath, roles.author.tool, `TARS author (${suffix})`, { extraArgs: roles.author.launchArgs ?? [] })
+  await client.addSession(worktreePath, roles.reviewer.tool, `TARS reviewer (${suffix})`, { extraArgs: roles.reviewer.launchArgs ?? [] })
   return discoverPair(client, worktreePath, legacyShape ? undefined : roles)
 }

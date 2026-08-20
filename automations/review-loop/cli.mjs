@@ -5,7 +5,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
-import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
+import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
@@ -225,16 +225,7 @@ function resolvePlanning(value, suggested) {
 }
 
 async function findWorktreeSession(client, repoPath, branch, tool) {
-  const sessions = await client.listSessions()
-  const normalizedRepoPath = `${repoPath.replace(/\/$/, "")}/`
-  const matching = sessions.filter(
-    (session) =>
-      session.tool === tool &&
-      session.worktree?.branch === branch &&
-      session.worktree?.main_repo_path === normalizedRepoPath,
-  )
-  if (matching.length > 1) throw new Error(`Found ${matching.length} existing ${tool} sessions for branch ${branch}.`)
-  return matching[0]
+  return findActiveWorktreeSession(await client.listSessions(), repoPath, branch, tool)
 }
 
 async function readIssue(repoPath, issueNumber) {

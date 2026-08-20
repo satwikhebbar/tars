@@ -65,6 +65,21 @@ test("allows the same harness in separate author and reviewer roles", async () =
   assert.equal(state.entries[0].reviewerTool, "claude")
 })
 
+test("uses the selected harness launch arguments for author and reviewer sessions", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = {
+    author: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+    reviewer: { key: "opencode", tool: "opencode" },
+  }
+  await startLane({
+    aoe, state, roles, repoPath: "/repo", issue: { number: 9, title: "Approved commands" }, branch: "issue/9-approved-commands",
+    worktreeName: "issue-9-approved-commands", maxRounds: 5, planning: "not_required", openingPrompt: "author prompt",
+  })
+  assert.deepEqual(aoe.extraArgs, ["--approve-for-me"])
+  assert.deepEqual(aoe.reviewerExtraArgs, [])
+})
+
 test("closes an approved lane through AoE before deleting its worktree", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
@@ -191,8 +206,9 @@ class FakeAoe {
     return { id: "open-44", path: "/repo--issue-44-add-calendar-export" }
   }
 
-  async addSession(path, tool) {
+  async addSession(path, tool, { extraArgs = [] } = {}) {
     this.added.push([path, tool])
+    this.reviewerExtraArgs = extraArgs
     return { id: "codex-44", path }
   }
 

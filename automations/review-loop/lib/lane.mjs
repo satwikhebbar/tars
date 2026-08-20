@@ -10,11 +10,11 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
-    extraArgs: planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [],
+    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [])],
   })
   const worktreePath = author.path
   await provision?.(worktreePath)
-  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`)
+  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, { extraArgs: roles.reviewer.launchArgs ?? [] })
   state.saveLane({
     worktreePath,
     authorSessionId: author.id,
