@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { closeLane, issueOpeningPrompt, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, registerLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
   const aoe = new FakeAoe()
@@ -27,6 +27,10 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
   assert.match(aoe.sent[0].message, /direct-build: begin implementation now/)
   assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
+  assert.deepEqual(aoe.grouped, [
+    ["open-44", "/repo--issue-44-add-calendar-export"],
+    ["codex-44", "/repo--issue-44-add-calendar-export"],
+  ])
   assert.equal(state.entries[0].codexSessionId, "codex-44")
   assert.equal(state.entries[0].phase, "building")
 })
@@ -48,6 +52,21 @@ test("starts a planning lane with OpenCode plan arguments", async () => {
   })
   assert.deepEqual(aoe.extraArgs, ["--agent", "plan", "--model", "deepseek/v4-pro"])
   assert.equal(state.entries[0].phase, "planning")
+})
+
+test("groups registered existing sessions by their canonical worktree path", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo-worktrees/issue-44-add-calendar-export"
+  await registerLane({
+    aoe,
+    state,
+    worktreePath,
+    maxRounds: 5,
+    roles: { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } },
+    pair: { authorSessionId: "open-44", reviewerSessionId: "codex-44" },
+  })
+  assert.deepEqual(aoe.grouped, [["open-44", worktreePath], ["codex-44", worktreePath]])
 })
 
 test("allows the same harness in separate author and reviewer roles", async () => {
@@ -198,6 +217,11 @@ class FakeAoe {
 
   async send(sessionId, message) {
     this.sent.push({ sessionId, message })
+  }
+
+  async moveSessionToGroup(sessionId, worktreePath) {
+    this.grouped ??= []
+    this.grouped.push([sessionId, worktreePath])
   }
 
   async listSessions() {

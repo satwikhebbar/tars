@@ -31,6 +31,11 @@ export class AoeClient {
     await execFileAsync(this.command, ["send", sessionId, message])
   }
 
+  /** Places a session in the group named for its canonical lane worktree. */
+  async moveSessionToGroup(sessionId, worktreePath) {
+    await execFileAsync(this.command, ["group", "move", sessionId, worktreePath])
+  }
+
   async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false } = {}) {
     const args = ["remove", sessionId]
     if (deleteWorktree) args.push("--delete-worktree")
