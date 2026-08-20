@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Multi-agent coding orchestration landscape</title>
+  <style>
+    :root { color-scheme: light dark; --ink:#17212b; --muted:#536170; --line:#d7dde5; --panel:#f6f8fb; --accent:#0b6e99; --code:#eef2f7; }
+    * { box-sizing: border-box; }
+    body { margin:0; color:var(--ink); background:#fff; font:16px/1.58 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width:1120px; margin:0 auto; padding:56px 36px 88px; }
+    h1,h2,h3 { line-height:1.2; letter-spacing:-.02em; }
+    h1 { font-size:2.4rem; margin:0 0 8px; }
+    h2 { font-size:1.65rem; margin:56px 0 18px; padding-top:16px; border-top:1px solid var(--line); }
+    h3 { font-size:1.22rem; margin:34px 0 12px; }
+    p,li { max-width:82ch; }
+    a { color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px; }
+    strong { font-weight:700; }
+    code { padding:.12em .32em; border-radius:4px; background:var(--code); font:0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { overflow:auto; padding:18px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+    pre code { padding:0; background:transparent; }
+    table { display:block; width:100%; overflow-x:auto; border-collapse:collapse; margin:20px 0 30px; font-size:.92rem; }
+    th,td { min-width:150px; padding:12px 14px; vertical-align:top; text-align:left; border:1px solid var(--line); }
+    th { background:var(--panel); font-weight:700; }
+    blockquote { margin:20px 0; padding:0 20px; border-left:4px solid var(--accent); color:var(--muted); }
+    hr { border:0; border-top:1px solid var(--line); margin:36px 0; }
+    @media (prefers-color-scheme: dark) { :root { --ink:#e5eaf0; --muted:#aeb8c4; --line:#344150; --panel:#17202a; --accent:#65c5ef; --code:#202b37; } body { background:#10161d; } }
+    @media print { body { background:#fff; } main { max-width:none; padding:24px; } h2 { break-after:avoid; } table,pre { break-inside:avoid; } }
+  </style>
+</head>
+<body>
+<main>
+<h1>Multi-agent coding orchestration landscape</h1>
+<p>Research date: 2026-08-17<br>Status: first working draft — intended to be revised after a short, hands-on evaluation.</p>
+<h2>Executive conclusion</h2>
+<p>TARS is not simply recreating Agent of Empires (AoE).  It uses AoE as an
+<em>execution substrate</em> (sessions, worktrees, terminal delivery) and adds a
+<em>workflow policy layer</em>: an OpenCode implementer and a Codex reviewer exchange
+durable, correlated handoffs; a coordinator enforces review gates, iterations,
+idempotent delivery, and PR/reopen rules.</p>
+<p>However, TARS does reimplement some <strong>session/worktree lifecycle</strong> that AoE
+already provides.  That overlap deserves a deliberate thinning pass.  Orca is
+the strongest currently visible alternative if the desired product is a
+worktree-native, visual command centre with native task/run/worker concepts.
+Its orchestration feature is explicitly experimental, so it should be evaluated
+as a promising control plane—not assumed to replace TARS&#39;s policy engine.</p>
+<p>The useful architecture boundary is:</p>
+<pre><code class="language-text">issue / PR / team conventions
+          │
+TARS: role-aware review &amp; delivery policy     ← remains valuable
+          │
+AoE / Orca / Conductor: sessions, worktrees, UI, isolation, observability
+          │
+Git worktree, agent CLIs, containers, remote machines
+</code></pre>
+<p>“Lane” is therefore overloaded.  In TARS, it is a persisted workflow with two
+roles and state.  In Orca, the closest native pieces are a worktree plus (for
+supervised work) a Run/Task/Dispatch.  In AoE, a group is an organizational UI
+bucket; its sessions are independent.  We should not equate these concepts
+without deciding which semantic level we need.</p>
+<h2>Scope and evaluation method</h2>
+<p>This compares tools that can help run several coding agents and/or isolated
+code changes in parallel.  It does <em>not</em> treat “can launch an LLM” as adequate
+evidence of multi-agent orchestration.</p>
+<h3>Confirmed decision frame</h3>
+<p>This evaluation is for a <strong>local, terminal-first</strong> operating model.  Cloud
+hosting is a later deployment concern once local workflows have proved stable,
+not a direct substitute in this comparison.  Replacing either AoE or TARS is
+in scope: this is a fast-moving, nascent category and existing architecture is
+not presumed permanent.</p>
+<p>Priorities, in order, are:</p>
+<ol>
+<li>Human observability and control.</li>
+<li>Low operational complexity.</li>
+<li>Reliable review/approval loops, with a small GitHub issue backlog used to
+record TARS improvements for later implementation.</li>
+<li>Parallel throughput; it is required for more than one concurrent task, but
+not sufficient on its own.</li>
+</ol>
+<p>Accordingly, a tool that starts more agents but makes ownership, review state,
+recovery, or the next operator action harder to see should score poorly.</p>
+<h3>Concrete TARS workflow work currently parked</h3>
+<p>The comparison must be tested against two open TARS issues, not an abstract
+notion of a backlog:</p>
+<ol>
+<li><a href="https://github.com/satwikhebbar/tars/issues/2">#2: Support human-gated iteration checkpoints</a>.
+Today, TARS automatically advances a plan-first lane after Codex approves
+each non-final implementation increment.  The proposed optional mode would
+pause at that point, make the approved increment reviewable in a draft PR,
+and require an operator to explicitly continue the <em>same</em> lane.  The default
+remains fully automated.</li>
+<li><a href="https://github.com/satwikhebbar/tars/issues/1">#1: Add safe lane resume and recovery</a>.
+Today, an interrupted or stale coordinator can leave a lane needing manual
+SQLite inspection or prompt reconstruction.  The proposed recovery flow
+must derive the next action from durable handoffs and lane state, avoid a
+duplicate dispatch, clearly expose ambiguity/inactive sessions, and require
+explicit operator intent before it acts.</li>
+</ol>
+<p>These set two non-negotiable evaluation scenarios.  A prospective outer
+harness must either provide them natively with durable evidence, or make it
+straightforward for TARS&#39;s small policy layer to provide them without fragile
+UI automation.  In particular, a generic issue watcher/dispatcher is <strong>not</strong>
+an answer to the GitHub-issues requirement: the issues record product work;
+they do not authorize autonomous continuation of an uncertain lane.</p>
+<h3>Newly identified delivery and planning scenarios</h3>
+<p>The next iteration of the evaluation is no longer just “can several agents
+work in isolated worktrees?”  It must cover four additional, human-governed
+scenarios:</p>
+<ol>
+<li><strong>Post-hoc PR decomposition.</strong>  Given one large implementation branch/PR,
+derive a <em>reviewable dependency stack</em>—small logical branches and PRs whose
+bases preserve dependencies—without silently dropping, reordering, or
+changing the generated work.  A human reviewer other than the author should
+be able to review and approve each layer independently.</li>
+<li><strong>Deliberate planning.</strong>  Before implementation, an optional planning mode
+should actively challenge an initial request: surface ambiguity, invariants,
+failure modes, migrations, API compatibility, tests, observability, rollout
+and rollback.  “Grilling” describes a prompt/role and an approval protocol,
+not a capability that a worktree manager can supply by itself.</li>
+<li><strong>Human-shaped increments.</strong>  The author may define, merge, split, reorder
+or reject proposed iteration boundaries before execution.  The agent may
+propose a decomposition, but it must not become the lane&#39;s execution DAG
+merely because it is plausible.</li>
+<li><strong>External-feedback continuation.</strong>  A new human or CodeRabbit PR comment,
+review state, or unresolved review thread must become a durable, deduplicated
+work item.  It may <em>offer</em> a governed follow-up iteration, but must not
+silently dispatch an agent, mutate a branch, resolve a comment, or represent
+approval.  The follow-up needs the same worktree-level review handoff and
+explicit approval gate as an original iteration.</li>
+</ol>
+<p>These are distinct requirements.  A stacked-PR tool makes review slices easier
+but does not decide whether the slices are semantically valid; a PR webhook
+reports new feedback but does not authorize code changes; and a planning agent
+can ask excellent questions but cannot decide business trade-offs for the
+author.</p>
+<p>The assessment uses four separate dimensions:</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Question</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Isolation</td>
+<td>Can workers safely have independent files, branches, environment setup, and optionally compute?</td>
+</tr>
+<tr>
+<td>Control plane</td>
+<td>Can we create, observe, resume, stop, and clean up workers/worktrees?</td>
+</tr>
+<tr>
+<td>Coordination</td>
+<td>Is there durable task ownership, messaging, dependency/DAG support, acknowledgements, and recovery?</td>
+</tr>
+<tr>
+<td>Delivery governance</td>
+<td>Can it enforce our specific plan → immutable commit → review → PR/reopen policy?</td>
+</tr>
+</tbody></table>
+<p>Product “maturity” below is deliberately qualitative.  It reflects documented
+scope and explicit stability statements, not a claim about enterprise
+reliability, vendor longevity, or independent benchmark performance.</p>
+<h2>Shortlist</h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Category</th>
+<th>Maturity signal</th>
+<th>Relevant capability</th>
+<th>Bottom line</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>AoE</strong></td>
+<td>Open-source local session/worktree manager</td>
+<td>Broad documented CLI and MIT license; CityHall team server is explicitly experimental</td>
+<td>Heterogeneous agents, git worktrees, optional Docker, TUI/web, JSON CLI, ACP</td>
+<td>Keep as the current substrate; use more of it before replacing it.</td>
+</tr>
+<tr>
+<td><strong>AWS CLI Agent Orchestrator (CAO)</strong></td>
+<td>Open-source local, cross-provider agent coordinator</td>
+<td>Apache-2.0 AWS Labs project, actively versioned, with a local server and REST/MCP/CLI control planes</td>
+<td>Supervisor/worker handoff, async assignment, inbox messaging, workflow journal/resume, provider profiles, terminal restore and per-role tool restrictions</td>
+<td>The most important omitted comparator.  Stronger coordination than AoE, but it <strong>does not yet provide provider-neutral worktree isolation</strong>—an open AWS issue identifies that gap.</td>
+</tr>
+<tr>
+<td><strong>Orca</strong></td>
+<td>Commercial worktree-native agent IDE/control plane</td>
+<td>Broad local/remote docs; its orchestration layer is explicitly experimental</td>
+<td>Worktree-first UX, multi-agent launches, Runs/Tasks/Dispatches, messaging, decision gates, SSH and browser per worktree</td>
+<td>Best direct evaluation candidate for a native “lane” control surface.</td>
+</tr>
+<tr>
+<td><strong>Groundcrew</strong></td>
+<td>Open-source local task dispatcher</td>
+<td>MIT project with task-source adapters and sandbox-by-default operating model</td>
+<td>Watches assigned Linear/Jira/local tasks, routes to real CLI agents, one worktree per task, tmux/cmux/zellij, Docker/Safehouse</td>
+<td>A distinct issue-to-worker operating model, not a direct answer to TARS&#39;s manually curated GitHub improvement backlog; it lacks evidence of a durable reviewer state machine.</td>
+</tr>
+<tr>
+<td><strong>Vibe Kanban</strong></td>
+<td>Open-source local Kanban/worktree agent control plane</td>
+<td>Public source project; the original project is sunsetting and continuing community-maintained, so operational maturity needs a trial</td>
+<td>Task board, per-task worktree/branch/session, setup scripts, multi-repo workspaces, monitoring/review</td>
+<td>Strong human observability at low conceptual cost; primarily task/workspace management rather than inter-agent protocol.</td>
+</tr>
+<tr>
+<td><strong>dmux</strong></td>
+<td>Open-source terminal-first worktree multiplexer</td>
+<td>MIT, documented release/project activity and a deliberately narrow terminal UX</td>
+<td>tmux panes, one worktree/branch per pane, multi-agent launch, attach/resume, hooks, merge/PR actions</td>
+<td>Most compelling low-complexity terminal replacement for AoE&#39;s <em>workspace</em> layer; it does not coordinate review roles or workflow state.</td>
+</tr>
+<tr>
+<td><strong>Overstory</strong></td>
+<td>Open-source autonomous coding-team orchestrator</td>
+<td>Broad documented architecture, but adapter stability is explicitly mixed (only Claude/Sapling marked stable)</td>
+<td>Worktrees, SQLite typed mail, role restrictions, merge queue, watchdogs, checkpoints, Web UI/tmux escape hatch</td>
+<td>The most feature-complete workflow-engine comparison; potentially overlaps TARS deeply, but is materially more complex and not yet a proven OpenCode+Codex fit.</td>
+</tr>
+<tr>
+<td><strong>Conductor</strong></td>
+<td>Desktop workspace/worktree control plane</td>
+<td>First-class workspace lifecycle and agent integrations in its docs</td>
+<td>Worktree + branch + chat + setup/test + diff/PR/archive</td>
+<td>Good alternative visual shell; does not itself prove role-aware workflow governance.</td>
+</tr>
+<tr>
+<td><strong>Claude Code</strong></td>
+<td>Agent-native coordination plus worktrees</td>
+<td>Worktrees are documented product functionality; Agent Teams are experimental and disabled by default</td>
+<td>Lead/teammates, shared task list, direct messages, worktree-isolated subagents</td>
+<td>Strong for same-provider exploratory collaboration, not a direct heterogeneous replacement.</td>
+</tr>
+<tr>
+<td><strong>Codex app</strong></td>
+<td>Native parallel-agent desktop workspace</td>
+<td>Product docs say workflows are still being refined</td>
+<td>Parallel threads/projects, isolated worktrees, diff review, skills and automations</td>
+<td>Worth using directly for Codex-heavy lanes; it does not document TARS&#39;s cross-tool state machine.</td>
+</tr>
+<tr>
+<td><strong>GitButler</strong></td>
+<td>Alternative VCS workspace model</td>
+<td>Documented parallel-agent workflow</td>
+<td>Parallel virtual branches and hunk attribution in one checkout</td>
+<td>Useful experiment when duplicated worktrees are the bottleneck; weaker isolation by design.</td>
+</tr>
+</tbody></table>
+<h3>1. Agent of Empires (AoE): the current substrate</h3>
+<p>AoE is an MIT-licensed Rust/tmux session manager.  Its official site describes
+parallel worktrees, optional Docker sandboxing, TUI and web control surfaces,
+and support for Claude Code, Codex, OpenCode, Gemini CLI and others.  Its CLI
+has machine-readable session listing/status, session lifecycle commands,
+profiles, groups, project registry, worktree management, web serving, MCP/skill
+inspection, and ACP structured workers.  It can send a prompt to a running
+agent; ACP also supports prompting, approvals, cancellation, event tailing, and
+switching an ACP session to another agent while retaining the transcript.</p>
+<p>Sources: <a href="https://www.agent-of-empires.com/">AoE overview</a>,
+<a href="https://github.com/agent-of-empires/agent-of-empires/blob/main/docs/cli/reference.md">CLI reference</a>,
+<a href="https://github.com/agent-of-empires/agent-of-empires/blob/main/docs/quick-start.md">quick start</a>,
+<a href="https://github.com/agent-of-empires/agent-of-empires/releases">releases</a>.</p>
+<p><strong>Strengths</strong></p>
+<ul>
+<li>Tool-neutral local control plane: this matches the OpenCode + Codex pairing.</li>
+<li>Scriptable JSON CLI and terminal/ACP control are a solid foundation for an
+external coordinator.</li>
+<li>Worktree creation/cleanup, session resume/fork, containers, web/mobile
+observation, multi-repo sessions and diff bases reduce outer-harness work.</li>
+<li>Active feature development is visible in the release history; the current
+release at research time is v1.13.2 (2026-07-29).</li>
+</ul>
+<p><strong>Limits / risks</strong></p>
+<ul>
+<li>The official material presents a session manager, not a durable,
+role-aware review workflow engine.  <code>send</code> targets a session; it does not
+establish task ownership, a review protocol, or PR policy.</li>
+<li>AoE&#39;s <code>group</code> is not a TARS lane.  Treating it as one would lose the
+implementer/reviewer pairing and state semantics.</li>
+<li>CityHall, AoE&#39;s self-hostable shared control plane, is marked experimental;
+do not base a team-scale production decision on it without a pilot.</li>
+</ul>
+<h3>2. Orca / onorca: the closest native lane-like control plane</h3>
+<p>Orca makes each task a git worktree with its own branch, files, agent terminals,
+and review/ship lifecycle.  The UI tracks worktrees, supports children and
+descendant cleanup, and handles common worktree setup problems with shared
+directories and <code>.worktreeinclude</code>.  Its CLI can create a worktree, select an
+agent, send an initial prompt, apply setup policy, read/send/wait on terminals,
+and use JSON output.  It also documents an embedded browser per worktree and
+remote worktrees over SSH.</p>
+<p>Most importantly for this question, its <strong>experimental</strong> orchestration layer
+has a durable Run namespace/inbox; Tasks with dependencies and states; Dispatch
+attempts; coordinator messages; worker completion/heartbeats; and decision
+gates.  A worker can be launched in the current worktree, a new child worktree,
+or a remote host.  This is substantially closer to native lane/task semantics
+than AoE&#39;s documented session model.</p>
+<p>Sources: <a href="https://www.onorca.dev/docs/model/worktrees">Orca worktrees</a>,
+<a href="https://www.onorca.dev/docs/cli/reference">Orca CLI reference</a>,
+<a href="https://www.onorca.dev/docs/cli/orchestration">Orca orchestration</a>,
+<a href="https://www.onorca.dev/docs/ssh">SSH worktrees</a>.</p>
+<p><strong>Strengths</strong></p>
+<ul>
+<li>The best match for “one visible work area per task/lane,” including agent
+status, diff review, browser/preview and issue-link ergonomics.</li>
+<li>Native task ownership, tracked completion, explicit delivery acknowledgements
+and task dependencies can eliminate much of a custom polling dispatcher.</li>
+<li>It supports heterogeneous agent choices (including Codex and OpenCode), plus
+local and remote workers.</li>
+<li>Its Git setup support directly addresses a practical TARS concern: ignored
+files, caches, and dependencies do not automatically appear in fresh
+worktrees.</li>
+</ul>
+<p><strong>Limits / risks</strong></p>
+<ul>
+<li>Orchestration is opt-in experimental and has already retired earlier command
+forms.  That is a clear API-churn warning; use its current skill/API contract
+rather than scripting assumptions.</li>
+<li>The docs do not establish a predefined implementer/reviewer protocol,
+immutable-commit gate, or an issue/PR reopening policy.  Those likely remain
+domain workflow code (whether in TARS or Orca skills/automation).</li>
+<li>It is a GUI/runtime product rather than an open, detached CLI service; assess
+licensing, offline behavior, data handling, support, and automation
+survivability before adopting it as a team backbone.</li>
+</ul>
+<h3>3. AWS Labs CLI Agent Orchestrator (CAO): native coordination, missing the isolation layer</h3>
+<p>The AWS Labs project the engineer was likely referring to is
+<a href="https://github.com/awslabs/cli-agent-orchestrator"><strong><code>awslabs/cli-agent-orchestrator</code></strong></a>
+(CAO), not the unrelated AWS multi-agent application frameworks.  CAO runs a
+local HTTP server (defaulting to localhost) and exposes the same coordination
+model through CLI, MCP and REST APIs.  Agents receive terminal identities; a
+supervisor can synchronously <strong>handoff</strong> to a worker, asynchronously <strong>assign</strong>
+workers with a return callback, or send queued messages to an existing terminal.
+It documents provider profiles for Kiro CLI, Claude Code, Codex, OpenCode and
+other CLIs, terminal snapshots/restore, and role/allowed-tool restrictions
+where provider support permits.  Its documented Python workflow runner supports
+branching and concurrent fan-out, persists a durable journal, and can resume an
+interrupted run.  Runs are explicitly user-invoked; the simpler YAML workflow
+format does not yet execute its advertised parallel/pipeline/loop modes.  That
+is relevant to TARS&#39;s crash/retry concern, but makes the script runner—not YAML
+declarations—the meaningful comparison.</p>
+<p>Sources: <a href="https://github.com/awslabs/cli-agent-orchestrator">CAO repository and documentation</a>,
+<a href="https://github.com/awslabs/cli-agent-orchestrator/blob/main/README.md#multi-agent-orchestration">multi-agent orchestration section</a>,
+<a href="https://github.com/awslabs/cli-agent-orchestrator/blob/main/docs/control-planes.md">control planes</a>,
+and <a href="https://github.com/awslabs/cli-agent-orchestrator/issues/100">open provider-neutral worktree proposal #100</a>.</p>
+<p><strong>Why it matters:</strong> CAO directly addresses the part AoE lacks: explicit
+supervisor/worker routing, state, callbacks and heterogeneous roles.  Its REST
+and MCP surfaces also make it a plausible substrate for a TARS policy layer
+without pane scraping.</p>
+<p><strong>Why it is not currently a standalone TARS/AoE replacement:</strong> CAO&#39;s own open worktree issue
+states that spawned <code>handoff</code>/<code>assign</code> workers presently share the same Git
+branch and directory.  That creates exactly the concurrent overwrite/conflict
+risk TARS worktrees avoid.  This does <strong>not</strong> rule CAO out: TARS/AoE can create
+one isolated worktree per lane, then launch a CAO supervisor and its workers
+inside that lane.  CAO can therefore be piloted now as the lane&#39;s coordination
+layer while TARS/AoE remains the outer worktree allocator.  It needs native
+worktrees only to replace that allocator too.  Its automatic worker cleanup is
+also a trade-off against TARS&#39;s long-lived, inspectable implementer/reviewer
+pair.</p>
+<p><strong>Operational caution:</strong> CAO&#39;s Codex documentation says that a non-interactive
+tmux launch normally cannot answer approval prompts and describes a default
+permission-bypass mode.  Any pilot must explicitly use the desired safe Codex
+approval policy and demonstrate that a human can intervene; a more capable
+control plane is not a reason to silently widen agent authority.</p>
+<h3>4. Groundcrew: backlog-driven local dispatch with real isolation</h3>
+<p><a href="https://github.com/ClipboardHealth/groundcrew">Groundcrew</a> is an MIT local
+dispatcher aimed at the backlog-to-PR path.  It watches assigned Linear tasks
+(with Jira and local-file task sources), routes labels to agent launch profiles,
+creates one worktree/branch per task, and starts the real Claude, Codex, Cursor
+or Pi CLI in a tmux/cmux/zellij terminal.  It defaults to Safehouse or Docker
+Sandboxes and has worktree-preparation hooks, credentials guidance, and session
+headroom/budget routing.</p>
+<p>Source: <a href="https://github.com/ClipboardHealth/groundcrew">Groundcrew README and command/task-source reference</a>.</p>
+<p><strong>Pros:</strong> it is unusually aligned with the stated priority of a durable backlog:
+assigned issues are its input, agent/model selection is explicit, and task
+blockers are respected before dispatch.  Local terminals preserve human takeover
+and each job is genuinely isolated.</p>
+<p><strong>Cons:</strong> the documented lifecycle is a dispatcher, not a two-role quality
+protocol.  A reviewer can be launched as another task/profile, but correlation,
+immutable-commit approval, cross-agent recovery, PR reopening and review policy
+would still be TARS workflow code.  Its sandbox and task-tracker configuration
+also add operational surface compared with AoE.</p>
+<h3>5. Vibe Kanban and dmux: competing human control planes</h3>
+<p><a href="https://www.vibekanban.com/docs/getting-started/">Vibe Kanban</a> is a local
+task-board model: creating a workspace creates an isolated worktree and branch,
+starts a configured agent, and can run setup/dev-server scripts.  A workspace
+can contain multiple repositories, notes, sessions and a target branch; work
+can be monitored and reviewed in the product.  It is a credible evaluation
+candidate where the primary pain is <em>seeing and steering many tasks</em>, rather
+than autonomous peer-to-peer coordination.</p>
+<p><a href="https://github.com/standardagents/dmux">dmux</a> takes the opposite, terminal
+first approach.  It is an MIT tmux application in which every task pane receives
+a worktree and branch; it supports a broad set of coding CLIs (including Codex
+and OpenCode), multi-select launches, durable/resumable panes, lifecycle hooks,
+file/diff inspection and merge/PR actions.</p>
+<p><strong>Pros:</strong> both reduce the operator&#39;s worktree bookkeeping substantially.  Vibe
+Kanban is the more legible task board; dmux is the lower-friction choice for a
+terminal-native team that wants every worker visible at once.</p>
+<p><strong>Cons:</strong> neither official surface documents durable role handoffs, task-level
+acknowledgements, reviewer gating, or a recovery-safe PR/reopen policy.  They
+are better evaluated as replacements for an AoE-style <em>control surface</em>, not
+for TARS&#39;s protocol.</p>
+<p>Sources: <a href="https://www.vibekanban.com/docs/workspaces/creating-workspaces">Vibe Kanban workspace lifecycle</a>,
+<a href="https://www.vibekanban.com/docs/core-features/monitoring-task-execution">Vibe Kanban execution monitoring</a>,
+and <a href="https://github.com/standardagents/dmux">dmux README</a>.</p>
+<h3>6. Overstory: the nearest open-source attempt to build the full coding-team engine</h3>
+<p><a href="https://github.com/jayminwest/overstory">Overstory</a> deserves inclusion because
+it attempts much more than workspace management: isolated worker worktrees,
+SQLite-backed typed inter-agent mail, a persistent coordinator/supervisor role
+hierarchy, a FIFO merge queue with tiered conflict resolution, mechanical and
+AI-assisted watchdogs, session checkpoints and runtime-specific tool guards.
+It can use a web UI for headless workers with tmux as an attach/steer escape
+hatch.</p>
+<p><strong>Pros:</strong> this is the clearest external evidence that several TARS ideas are
+not merely accidental reinvention: durable mail, workflow roles, watchdogs,
+merge sequencing, recovery and enforcement need to exist somewhere above Git
+worktrees.  It is the strongest candidate for a hands-on comparison of whether
+TARS should be replaced by a complete engine rather than thinned around AoE.</p>
+<p><strong>Cons:</strong> its documented runtime matrix marks Claude Code and Sapling stable but
+Codex and several others experimental; its architecture is substantially more
+opinionated and operationally heavier than TARS.  It currently provides no
+evidence that an OpenCode implementer plus Codex reviewer is a stable supported
+pair.  Do not adopt based on feature density alone.</p>
+<p>Source: <a href="https://github.com/jayminwest/overstory">Overstory architecture, runtime matrix and operations documentation</a>.</p>
+<h3>Emerging radar: projects worth watching, not yet decision candidates</h3>
+<p>The following projects are sufficiently close to be useful signals, but the
+available first-party evidence is too young, narrow, or untested to rank them
+beside the candidates above.  They should not be mistaken for missing mature
+replacements.</p>
+<table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Why it is interesting</th>
+<th>Why it is not yet a lead recommendation</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://github.com/alamops/agetor">Agetor</a></td>
+<td>Local Kanban for Claude/Codex with per-task worktrees, persisted SQLite runs, structured approval/question cards and multi-account harnesses.</td>
+<td>A fast-moving single-project control plane; no documented multi-agent review protocol.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/pmarsceill/mapcli">MAP</a></td>
+<td>Daemon/CLI for spawning and observing many local Claude/Codex subprocesses with default worktree isolation and lifecycle events.</td>
+<td>Its documented default is permission-bypassing autonomous launch; coordination/governance is thin.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/xintaofei/codeg">Codeg</a></td>
+<td>Cross-agent desktop workspace that can import/resume sessions and create worktrees for parallel work.</td>
+<td>Primarily an integrated editing/collaboration surface, not an auditable task/review engine.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Enderfga/claw-orchestrator">Claw Orchestrator</a></td>
+<td>Broad programmable session API with persistent CLI sessions, councils and planner/coder/reviewer loops.</td>
+<td>Very broad and opinionated; worktree and review-policy fit must be demonstrated, not inferred from its feature list.</td>
+</tr>
+<tr>
+<td><a href="https://github.com/laris-co/multi-agent-workflow-kit">multi-agent-workflow-kit</a></td>
+<td>Reusable tmux + worktree recipe/toolkit.</td>
+<td>Its own README labels it a proof of concept.</td>
+</tr>
+</tbody></table>
+<p>This radar also establishes an important boundary for scope.  General agent
+frameworks—such as Amazon Bedrock multi-agent patterns, LangGraph, AutoGen,
+CrewAI or MetaGPT—may help write a custom supervisor, but they are not direct
+local terminal/worktree harness substitutes.  They introduce a new application
+runtime and still require session, terminal, Git isolation and delivery policy
+to be built or integrated.  They are therefore adjacent implementation
+building blocks, not the next shortlist for replacing AoE/TARS.</p>
+<h3>7. Conductor: a direct local-workspace alternative</h3>
+<p>Conductor models a workspace as a worktree, branch, agent chat and lifecycle;
+its documentation covers setup/run/test steps, diff/PR/archive flow, and
+gitignored <code>.context</code> files for workspace notes/handoffs.  Its Codex guide says
+Conductor owns the worktree/branch lifecycle for each workspace.</p>
+<p>Sources: <a href="https://www.conductor.build/docs/concepts/git-worktrees">Git worktrees concept</a>,
+<a href="https://www.conductor.build/docs/guides/git-worktrees/run-codex-with-git-worktrees">run Codex with worktrees</a>.</p>
+<p><strong>Pros:</strong> a simpler, task-oriented desktop experience than a bespoke
+AoE+TARS wrapper; worktree environment and PR ergonomics are first-class.</p>
+<p><strong>Cons:</strong> its docs do not show a multi-role workflow state machine; worktree
+isolation is explicitly not security isolation, and agent permissions remain
+host permissions.  It should be evaluated as a UI/control-plane replacement,
+not as proof that durable review governance disappears.</p>
+<h3>8. Claude Code: native collaboration, but provider-bound and experimental</h3>
+<p>Claude Code documents four different parallel mechanisms: subagents, agent
+view, agent teams, and isolated worktree sessions.  Agent Teams consist of a
+lead, independent teammates, a shared task list, and direct mailbox messaging.
+Worktree isolation can be applied to subagents.  This is strong native
+coordination for a team of Claude sessions.</p>
+<p>Sources: <a href="https://code.claude.com/docs/en/agents">parallel agents</a>,
+<a href="https://code.claude.com/docs/en/agent-teams">agent teams</a>,
+<a href="https://code.claude.com/docs/en/worktrees">worktrees</a>.</p>
+<p><strong>Pros:</strong> real task/message coordination rather than only terminal management;
+worktrees are configurable; especially attractive for research, competing
+debugging hypotheses, or a partitioned multi-module implementation.</p>
+<p><strong>Cons:</strong> Agent Teams are experimental, disabled by default, interactive-only,
+and the official docs warn that they add coordination/token overhead and are a
+poor fit for sequential or same-file work.  It also does not natively model the
+heterogeneous OpenCode-implements/Codex-reviews division central to TARS.</p>
+<h3>9. Codex app: use the existing native capability before wrapping it</h3>
+<p>The Codex app is explicitly designed to run several agents in separate threads
+organized by project, with built-in worktrees so their edits do not collide.
+It supplies diff review, skills and automations.  OpenAI says it will continue
+refining multi-agent workflows based on feedback, which is useful evidence of
+direction but also means one should not infer a fully specified orchestrator.</p>
+<p>Sources: <a href="https://openai.com/index/introducing-the-codex-app/">Introducing the Codex app</a>,
+<a href="https://openai.com/codex/">Codex product page</a>.</p>
+<p><strong>Pros:</strong> already available to this team; native worktree isolation and Codex
+task management may make a separate reviewer-session launcher unnecessary for
+Codex-only lanes.</p>
+<p><strong>Cons:</strong> official product information does not document cross-agent durable
+handoffs, task DAGs, or an OpenCode↔Codex review state machine.  It is therefore
+complementary to a heterogeneous harness rather than presently a drop-in
+replacement.</p>
+<h3>10. GitButler: a deliberately different isolation trade-off</h3>
+<p>GitButler supports parallel agents working on virtual branches in one working
+directory, with agent setup and hunk-level attribution.  That can avoid
+duplicated dependency directories and duplicate local servers.</p>
+<p>Sources: <a href="https://docs.gitbutler.com/ai-agents/overview">AI agents overview</a>,
+<a href="https://docs.gitbutler.com/ai-agents/parallel-agents">parallel agents</a>.</p>
+<p><strong>Pros:</strong> potentially lower setup cost and better VCS ergonomics where many
+small, non-overlapping changes are made in one repo.</p>
+<p><strong>Cons:</strong> this is shared-filesystem work, not a worktree boundary.  It is not a
+fit for TARS&#39;s need for isolated concurrent agents, independent runtime state,
+or deterministic lane-level diffs.  Treat it as a separate experiment, not an
+AoE/Orca substitute.</p>
+<h2>Delivery workflow capabilities added to the comparison</h2>
+<h3>Stacked PRs: a delivery layer, not a replacement for worktrees</h3>
+<p>A worktree gives an agent an isolated <em>place to make a change</em>.  A stack gives
+humans a dependency-ordered <em>way to review and merge that change</em>.  They should
+be composed, not confused: TARS/Orca/AoE may allocate the implementation
+worktree, while a stack tool turns a committed result into review units.</p>
+<p><a href="https://graphite.com/docs/cli-overview">Graphite</a> is the clearest mature
+candidate for this delivery layer.  Its <code>gt split</code> command can split existing
+history by commit, file, or hunk; <code>gt submit</code> creates or updates distinct GitHub
+PRs for a branch stack; <code>gt modify</code>/<code>gt restack</code> propagate a changed lower layer
+to dependent branches.  It can assign reviewers and create draft PRs during
+submission.  Its docs describe the intended outcome directly: each stack layer
+can be tested, reviewed and merged independently.</p>
+<p>Sources: <a href="https://graphite.com/docs/command-reference">Graphite command reference</a>,
+<a href="https://graphite.com/docs/create-submit-prs">creating/submitting a stack</a>,
+<a href="https://graphite.com/docs/cli-quick-start">review-feedback and restacking workflow</a>,
+and <a href="https://graphite.com/docs/collaborate-on-a-stack">collaboration/frozen branches</a>.</p>
+<p><strong>What Graphite does well</strong></p>
+<ul>
+<li>It is an explicit, scriptable Git/GitHub model for parent/child branches and
+PRs, rather than an agent being asked to improvise rebases and PR bases.</li>
+<li>It handles the hard mechanical consequence of editing a lower reviewed layer:
+restacking dependent branches and exposing conflicts.</li>
+<li>It supports a human external reviewer for each generated PR, including draft
+creation and reviewer assignment.  A “frozen” branch can protect a remote
+stack layer against accidental local modification.</li>
+</ul>
+<p><strong>Limits that matter for TARS</strong></p>
+<ul>
+<li><code>gt split</code> can slice history structurally, but it cannot prove that a file or
+hunk boundary is a meaningful architecture/review boundary.  A planning or
+review authority must approve the proposed stack before publication.</li>
+<li>Restacking rewrites dependent commit ancestry.  The workflow needs a durable
+map from TARS iteration, original commit(s), stack branch, PR URL and current
+head SHA.  Otherwise a previous approval can be incorrectly treated as an
+approval of rewritten code.</li>
+<li>Graphite is a Git/GitHub delivery tool, not an agent coordinator: it does not
+provide role handoffs, worktree recovery, or governed interpretation of PR
+comments.  It is a strong <em>complement</em> to AoE/Orca/TARS, not a substitute.</li>
+</ul>
+<p><a href="https://docs.coderabbit.ai/pull-request-reviews/change-stack">CodeRabbit Change Stack</a>
+is another relevant review surface: it reorganizes a large PR into a guided,
+logical walkthrough rather than a flat alphabetical file list.  This can reduce
+reviewer cognitive load without rewriting branches.  CodeRabbit&#39;s
+<a href="https://docs.coderabbit.ai/finishing-touches/autofix">Autofix</a> is beta and can
+create a stacked PR from eligible unresolved CodeRabbit threads; its
+<a href="https://docs.coderabbit.ai/changelog">changelog</a> also documents stacked PR
+delivery for CI fixes.  These are valuable aids, but they are CodeRabbit-run
+changes in a sandbox—not evidence of a TARS-compatible, human-approved
+multi-role lane.  Treat both as opt-in review assistance and retain an explicit
+human approval before anything joins a TARS stack.</p>
+<p><a href="https://docs.gitbutler.com/ai-agents/parallel-agents">GitButler</a> has useful
+parallel-agent and virtual-branch ergonomics.  Its
+<a href="https://docs.gitbutler.com/features/branch-management/stacked-branches">stacked-branches model</a>
+creates dependent branches and PRs targeting their parent, supports commit
+movement/squashing/amendment, and has operation-log restoration.  Its CLI is a
+real local scripting alternative worth a short comparison with Graphite.
+However, GitButler&#39;s own parallel-agent documentation says its shared workspace
+is not runtime isolation: use worktrees where isolated runtimes or checkout
+state are needed.  It is therefore complementary to TARS lanes, rather than a
+replacement for them.</p>
+<p>Sapling&#39;s <a href="https://sapling-scm.com/docs/git/sapling-stack/">Git stack support</a>
+can submit a PR per commit (<code>sl pr submit --stack</code>) and update linked PRs, but
+its documentation notes that GitHub&#39;s normal presentation can show overlapping
+commits and recommends ReviewStack for the intended view.  It is worth watching
+where a team is already standardized on Sapling, but is not the recommended
+TARS pilot: it introduces a separate source-control workflow without solving
+feedback governance or heterogeneous-agent coordination.  Neither currently
+displaces Graphite as the most direct post-hoc-splitting spike.</p>
+<p>GitHub itself supplies a <strong>merge queue</strong>, not a stack-authoring model.  It can
+validate queued PR changes with the current base and preceding queued PRs, and
+merge only after required checks pass; CI must handle the separate
+<code>merge_group</code> event.  That is useful for independent PRs, but it does not
+create dependency branches or make a huge PR easier to review.  More
+importantly, Graphite documents that GitHub Merge Queue does not understand
+stacks and can merge their PRs out of order.  A TARS stacked-PR pilot must
+therefore choose and test a stack-aware merge path (for example Graphite&#39;s
+bottom-up stack merge), rather than casually combining GitHub Merge Queue with
+dependent PRs.</p>
+<p>Sources: <a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue">GitHub merge queues</a>
+and <a href="https://graphite.com/docs/github-configuration-guidelines">Graphite&#39;s merge queue guidance</a>.</p>
+<h3>Planning: make the plan a human-owned contract</h3>
+<p>The requested “Matt Pocock-style grilling” should be added as a <strong>planning
+mode</strong>, not hidden inside a more verbose implementer prompt.  A recommended
+artifact is a versioned <code>plan contract</code> with: problem/outcome; explicit
+non-goals; assumptions and open questions; interfaces and invariants; edge and
+failure cases; migration/rollback; verification evidence; proposed reviewable
+increments; dependencies; and an author decision for every ambiguity that
+materially changes scope.</p>
+<p>The agent&#39;s job is to challenge and draft this contract, then propose a DAG of
+increments.  The human author owns approval and may edit the plan and its
+boundaries.  Only a plan-contract SHA plus an author-approved iteration manifest
+may enter execution.  A later plan change should create a new revision and
+explicitly mark unstarted iterations superseded; it must never quietly reshape
+an in-flight lane.</p>
+<p>Orca&#39;s experimental Run/Task/Dispatch and decision-gate concepts are promising
+control-plane primitives for a pause/decision.  They do <strong>not</strong>, from the
+documented surface, supply the above question taxonomy, author-owned plan
+version, or a semantics-aware iteration boundary.  AoE, dmux, Vibe Kanban and
+CAO similarly can host a planning agent or pause a session, but none removes
+the need for this workflow policy.  This is an area where TARS is intentionally
+not reinventing a worktree feature: it is encoding a team decision right above
+the harness layer.</p>
+<h3>Feedback intake: GitHub and CodeRabbit are event sources, not controllers</h3>
+<p>GitHub provides the necessary primitives.  A GitHub App can subscribe to
+<code>pull_request_review</code>, <code>issue_comment</code>, <code>pull_request_review_comment</code>, and
+<code>pull_request_review_thread</code> activity; the last reports a thread being marked
+resolved.  The REST API can list reviews, and GitHub&#39;s GraphQL model exposes
+review threads and their comments.  This supports low-latency webhook intake
+with a polling/reconciliation fallback, including a cursor/watermark for
+restart recovery.</p>
+<p>Sources: <a href="https://docs.github.com/en/webhooks/webhook-events-and-payloads">GitHub webhook events and payloads</a>,
+<a href="https://docs.github.com/en/rest/pulls/reviews">REST pull-request reviews</a>, and
+<a href="https://docs.github.com/en/graphql/reference/objects#pullrequestreviewthread">GraphQL pull-request review threads</a>.</p>
+<p>Where GitHub Actions is the chosen transport instead of a GitHub App webhook,
+the supported triggers include <code>issue_comment</code>, <code>pull_request_review</code>, and
+<code>pull_request_review_comment</code>.  Fork PRs have important token/secrets
+restrictions, so a feedback worker must not execute untrusted fork code as a
+side effect of receiving a comment.</p>
+<p>Source: <a href="https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows">GitHub Actions events</a>.</p>
+<p>The correct architecture is a small <strong>feedback adapter</strong> at the GitHub/PR
+boundary, not UI polling in AoE or Orca:</p>
+<pre><code class="language-text">GitHub human review / CodeRabbit review / CI
+                 │ webhooks + reconciliation poll
+                 ▼
+deduplicated feedback inbox (PR, delivery/comment/thread/review IDs, head SHA)
+                 │ classify: informational | needs-author decision | actionable
+                 ▼
+human approval to open a follow-up iteration
+                 ▼
+new/reused isolated worktree → implementer → immutable commit → reviewer handoff
+                 ▼
+external human review → record disposition and reply/resolve only with authority
+</code></pre>
+<p>The durable inbox must retain original payload identity, author, source,
+timestamp, thread state, the PR head SHA it applied to, classification,
+disposition and link to the follow-up iteration.  Delivery IDs make webhook
+processing idempotent; periodic reconciliation catches missed deliveries.
+The system should group a submitted review&#39;s inline comments into one candidate
+feedback batch, while preserving individual thread identities.  It must
+distinguish a fresh comment on a newer head from an already-addressed stale
+comment, and it must never auto-resolve external threads merely because an
+agent says a change is complete.</p>
+<p>This design works whether the worktree/session substrate is AoE, Orca or
+another tool.  Orca may supply the visible worktree and a decision gate; AoE
+may supply the session; neither replaces GitHub&#39;s event API nor TARS&#39;s
+authorization, correlation and approval rules.</p>
+<h3>Required acceptance tests for a real-issue pilot</h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Pass condition</th>
+<th>Native tool contribution</th>
+<th>Policy/integration that remains TARS-owned</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Human-shaped plan</td>
+<td>The agent produces a challenge log and proposed increments; author edits/approves a versioned manifest before any build dispatch.</td>
+<td>Orca decision gate / AoE session pause can present the choice.</td>
+<td>Question taxonomy, plan schema/versioning, author authority and dispatch guard.</td>
+</tr>
+<tr>
+<td>Split a large lane result</td>
+<td>A test PR becomes 2–5 named stack layers with correct bases, each diff independently reviewable; original branch/PR is preserved until a human accepts replacement.</td>
+<td>Graphite split/restack/submit; CodeRabbit Change Stack can aid review without rewriting.</td>
+<td>Logical slicing criteria, stack proposal approval, commit/PR provenance and rollback.</td>
+</tr>
+<tr>
+<td>External human review</td>
+<td>A non-author review requesting changes yields one visible candidate batch; no worker starts until an operator approves.</td>
+<td>GitHub review API/webhooks and PR UI.</td>
+<td>Deduplication, classification, authorization, lane correlation and handoff creation.</td>
+</tr>
+<tr>
+<td>CodeRabbit finding</td>
+<td>A new unresolved CodeRabbit thread is correlated to the exact PR head; an approved TARS iteration addresses it and retains the thread link.</td>
+<td>GitHub event surfaces; optional CodeRabbit Autofix/Change Stack.</td>
+<td>Treat CodeRabbit as feedback—not authority; reviewer approval, tests, thread disposition.</td>
+</tr>
+<tr>
+<td>Restart/replay</td>
+<td>Replaying a webhook/restarting the coordinator produces no duplicate worktree, dispatch or PR update; operator sees why each candidate is pending/resolved.</td>
+<td>GitHub delivery/reconciliation primitives; Orca/AoE durable session state where available.</td>
+<td>Inbox journal, idempotency keys, recovery UI and explicit resume action.</td>
+</tr>
+<tr>
+<td>Stacked merge</td>
+<td>Each approved layer is independently mergeable and required checks pass against its correct base; the selected stack-aware merge path preserves bottom-up dependency order.</td>
+<td>Graphite dependency maintenance and stack merge.</td>
+<td>Which layers can merge, approval freshness after restack, conflict escalation and release policy.</td>
+</tr>
+</tbody></table>
+<h3>Practical recommendation for tomorrow</h3>
+<ol>
+<li><strong>Add planning and iteration-shaping before adding more autonomy.</strong>  Build a
+human-approved plan contract/iteration manifest on the current TARS lane,
+including the interrogative planning mode.  This is harness-independent and
+directly satisfies the author-control requirement.</li>
+<li><strong>Run a Graphite spike on one already-large generated PR.</strong>  First create a
+read-only proposed dependency map; then use a disposable copy to test
+<code>gt split</code> and <code>gt submit --stack --draft</code>.  Measure whether 2–5 layers are
+genuinely reviewable by an external reviewer, how restacks affect approvals,
+and how readily the original can be restored.  Do not make destructive
+history changes to the only copy of the current PR.</li>
+<li><strong>Add a GitHub feedback inbox in observe-only mode.</strong>  Receive/webhook or
+reconcile comments, reviews and review threads; show the exact candidate
+follow-up and the relevant head SHA; require a human “open iteration” action.
+Only after replay/recovery tests should it dispatch the existing TARS
+handoff-and-approval loop.</li>
+<li><strong>Pilot Orca separately on the full scenario.</strong>  Confirm that its
+experimental multi-role orchestration can launch and recover an
+implementer/reviewer flow, present the author decision points, and expose
+the feedback iteration.  Do not assume worktree-first implies this protocol
+exists natively; score it against the table above.</li>
+</ol>
+<h2>What TARS currently builds</h2>
+<p>Repository evidence shows the following division:</p>
+<table>
+<thead>
+<tr>
+<th>TARS capability</th>
+<th>Current implementation evidence</th>
+<th>AoE overlap?</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Create/remove worktree and implementation session</td>
+<td><code>startLane</code> calls AoE <code>add --worktree --new-branch</code>; close removes AoE sessions/worktree/branch</td>
+<td>High</td>
+<td>Keep a thin adapter; avoid duplicating names/lifecycle beyond policy validation.</td>
+</tr>
+<tr>
+<td>Add/discover/restart persistent agent sessions</td>
+<td><code>AoeClient</code>, <code>discoverPair</code>, readiness polling, <code>send</code></td>
+<td>High</td>
+<td>Prefer AoE&#39;s session model/JSON/ACP lifecycle. Keep only checks needed to uphold lane invariants.</td>
+</tr>
+<tr>
+<td>Lane registry and state</td>
+<td>SQLite record per worktree with roles, phase, rounds and idempotent journal</td>
+<td>Low</td>
+<td>TARS-specific; retain unless switching to Orca Run/Task/Dispatch after parity testing.</td>
+</tr>
+<tr>
+<td>Durable cross-agent handoff</td>
+<td><code>.agent-handoff/</code> with IDs, workflow IDs, rounds, commits, outcomes</td>
+<td>Low</td>
+<td>Retain. A terminal message is not an auditable, replay-safe handoff.</td>
+</tr>
+<tr>
+<td>Plan approval and serial reviewable iterations</td>
+<td>plan verdict → compact → build; per-iteration immutable commit review</td>
+<td>Low</td>
+<td>Retain as a quality/delivery policy.</td>
+</tr>
+<tr>
+<td>Human-shaped plan contract and iteration manifest</td>
+<td>Not yet represented as an author-versioned artifact with a dispatch guard</td>
+<td>Low</td>
+<td>Add to TARS. A decision gate can host the pause, but human ownership of plan scope/boundaries is policy.</td>
+</tr>
+<tr>
+<td>Routing &amp; retry protection</td>
+<td>exact registered role/session, correlation fields, round caps, reopen marker</td>
+<td>Low</td>
+<td>Retain. This protects against stale or cross-lane prompts.</td>
+</tr>
+<tr>
+<td>PR/feedback lifecycle</td>
+<td>only final approval creates PR; explicit reopen updates existing PR</td>
+<td>Low</td>
+<td>Retain; it is team process policy, not generic worktree management.</td>
+</tr>
+<tr>
+<td>External review feedback inbox</td>
+<td>Not yet automated for GitHub human/CodeRabbit comments</td>
+<td>Low</td>
+<td>Add a GitHub webhook + reconciliation adapter and an approval-gated follow-up handoff. Outer harnesses do not replace it.</td>
+</tr>
+<tr>
+<td>Large-PR delivery decomposition</td>
+<td>Not yet represented as stack branches/PRs</td>
+<td>Low</td>
+<td>Integrate a stack tool (Graphite first; compare GitButler) after a human accepts a proposed logical boundary map.</td>
+</tr>
+<tr>
+<td>Branch/worktree naming preflight</td>
+<td>bounded OpenCode naming/classification plus deterministic fallback</td>
+<td>Medium</td>
+<td>Consider replacing with issue-provider / Orca native names, but preserve deterministic fallback and validation.</td>
+</tr>
+<tr>
+<td>Agent skills/install/bootstrap</td>
+<td>global/per-worktree TARS skills and prompts</td>
+<td>Low</td>
+<td>Retain as portable conventions; AoE/Orca may distribute or invoke them more conveniently.</td>
+</tr>
+</tbody></table>
+<p>Evidence: <a href="../README.md">TARS README</a>,
+<a href="../automations/review-loop/README.md">review-loop reference</a>,
+<a href="../protocols/README.md">workflow protocol</a>,
+<a href="../automations/review-loop/lib/aoe.mjs">AoE adapter</a>, and
+<a href="../automations/review-loop/lib/lane.mjs">lane lifecycle</a>.</p>
+<h2>AoE capabilities TARS should test before building more</h2>
+<p>This is an opportunity list, not a claim that all should be adopted.</p>
+<ol>
+<li><strong>Use AoE as the authoritative lifecycle/control plane.</strong>  Keep TARS&#39;s
+<code>AoeClient</code> narrow, but prefer AoE <code>list</code>/<code>ps --json</code>, worktree cleanup,
+profiles, project registry, groups and session archive/restore rather than
+creating parallel bookkeeping or cleanup behavior.</li>
+<li><strong>Evaluate ACP for structured delivery and observation.</strong>  The existing
+adapter sends terminal text and polls pane capture for readiness.  Test
+<code>aoe acp prompt</code>, status/tail, approval and cancellation for more reliable
+delivery/observability.  Do not remove file handoffs until restart and
+missed-delivery behavior is proven.</li>
+<li><strong>Use AoE session metadata for operator visibility.</strong>  A session group,
+title, color/favorite/snooze, base ref, and archive status can make a lane
+legible without TARS recreating an operator UI.  Store the policy mapping
+(lane → role sessions) in TARS, not only in labels.</li>
+<li><strong>Adopt existing environment isolation where needed.</strong>  Pilot AoE Docker
+sandboxes for untrusted/risky work and its multi-repo session support for
+cross-repository changes.  This is orthogonal to handoff correctness.</li>
+<li><strong>Use fork/resume deliberately.</strong>  AoE can preserve/fork conversations.
+That may improve plan-to-build continuity or create bounded alternatives,
+but the reviewer must still see a committed artifact and stable handoff.</li>
+</ol>
+<h2>What no outer harness removes</h2>
+<p>Even the best control plane does not eliminate these decisions:</p>
+<ul>
+<li><strong>Work partitioning and ownership:</strong> worktrees prevent file clobbering, not
+semantic conflicts or conflicting architectural decisions.</li>
+<li><strong>Protocol and source of truth:</strong> an implementer/reviewer exchange needs
+correlation, immutable revision identity, acknowledgement and recovery.</li>
+<li><strong>Quality gate policy:</strong> who reviews, what counts as approval, when to run
+tests, and whether reviews occur after each iteration are organizational
+choices.</li>
+<li><strong>Delivery policy:</strong> PR creation, branch protection, external review
+feedback, merge, rollback and escalation are repository/team-specific.</li>
+<li><strong>Environment policy:</strong> secrets, database/port isolation, migrations, shared
+services and destructive permissions must be handled above <code>git worktree</code>.</li>
+<li><strong>Cost and concurrency control:</strong> parallelism is beneficial only for
+sufficiently independent tasks; it multiplies token/runtime cost and can
+increase integration work.</li>
+</ul>
+<h2>Provisional recommendation</h2>
+<ol>
+<li><p><strong>Do not replace AoE immediately.</strong>  First simplify TARS/AoE boundaries and
+pilot AoE ACP plus its existing lifecycle features.</p>
+</li>
+<li><p><strong>Run a time-boxed Orca proof of concept.</strong>  Recreate the two concrete TARS
+scenarios from #2 and #1: a human-gated approved iteration with a draft PR,
+and recovery after an interrupted worker.  Include planning,
+implementer/reviewer handoff, one change-request round, approval, PR
+feedback reopen and cleanup.  Use Orca&#39;s experimental Run/Task/Dispatch
+rather than only its worktree UI.</p>
+</li>
+<li><p><strong>Compare the result against explicit acceptance criteria</strong>, not novelty:</p>
+<ul>
+<li>no cross-lane message or state contamination;</li>
+<li>an immutable commit is reviewable and linked to its approval;</li>
+<li>crash/restart does not duplicate dispatch or lose a handoff;</li>
+<li>an operator can see owner, status, blockage and next action quickly;</li>
+<li>worktree setup, secrets, ports and cleanup are reliable;</li>
+<li>PR/reopen behavior follows the current policy;</li>
+<li>scripts can automate the critical path without fragile UI scraping;</li>
+<li>total operator effort and failure recovery are measurably lower than TARS.</li>
+<li>an optional approved-increment checkpoint can create a reviewable draft
+PR and pause the existing lane until a human explicitly continues it;</li>
+<li>after coordinator or agent interruption, the system can present
+evidence-backed recovery choices without duplicate dispatch, and cannot
+resume solely because a GitHub issue exists.</li>
+</ul>
+</li>
+<li><p><strong>Add two deliberately different pilots, rather than an undifferentiated tool tour.</strong></p>
+<ul>
+<li>Treat <strong>Groundcrew</strong> as an optional, deliberately different experiment:
+test issue pickup, routing, sandboxing and local takeover only if TARS
+later wants assigned issues to trigger unattended work.  It does not
+improve the two currently parked issues merely because they live in
+GitHub.</li>
+<li>Pilot <strong>CAO as a composable coordination layer now.</strong>  Let TARS/AoE
+allocate one worktree per lane, then run CAO&#39;s supervisor/worker protocol
+within that lane.  Test handoff/assignment, workflow-journal resume, role
+restrictions and human approval configuration.  Do <strong>not</strong> use CAO&#39;s
+parallel workers for same-repository implementation without that outer
+worktree boundary.</li>
+</ul>
+</li>
+<li><p><strong>Use Claude Teams and Codex app selectively.</strong>  They are excellent agents
+to delegate exploration or independent coding to, but neither is currently
+evidenced as the cross-provider, durable review coordinator TARS uses.</p>
+</li>
+<li><p><strong>Treat dmux/Vibe Kanban as operator-experience substitutions and Overstory
+as an architectural replacement test.</strong>  The former pair may make local
+worktree operation simpler without changing policy; Overstory is the only
+added candidate that claims most of the policy/merge/recovery territory, so
+it merits a more skeptical, end-to-end evaluation rather than piecemeal
+adoption.</p>
+</li>
+<li><p><strong>Treat delivery decomposition and external feedback as first-class TARS
+boundaries.</strong>  Add the human-owned plan contract and approved iteration
+manifest before dispatch; evaluate Graphite (then GitButler) as a separate
+stack-delivery layer; and start GitHub/CodeRabbit intake in observe-only
+mode.  Do not mistake CodeRabbit Change Stack for real Git branches, nor
+GitHub Merge Queue for a compatible stacked-PR merger.</p>
+</li>
+</ol>
+<h2>Confirmed operating decisions and remaining deployment questions</h2>
+<p>The following decisions now anchor the evaluation:</p>
+<ol>
+<li><strong>Personal local command centre.</strong>  A team-wide shared service is not the
+immediate goal.  Local-first operation and a low-friction human control
+surface therefore outweigh central administration features.</li>
+<li><strong>Harness-agnostic roles.</strong>  More providers will join over time, and the
+same harness may act as both implementer and reviewer.  The required
+invariant is independent role sessions and an immutable artifact for review,
+not a fixed OpenCode-versus-Codex pairing.</li>
+<li><strong>Independent review is non-negotiable.</strong>  Every lane retains a review gate
+as the second pair of eyes; a &quot;cheap&quot; single-agent route is out of scope.</li>
+<li><strong>Decision metric: operator attention.</strong>  Prefer the option that closes
+lanes with high-quality output while requiring the least unnecessary
+monitoring, context reconstruction, intervention, and recovery work.</li>
+<li><strong>Runtime isolation: staged.</strong>  Immediate target: every worktree can run
+its unit and integration tests independently.  Per-lane databases,
+credentials, cloud accounts, and full service isolation are likely later
+needs, but are not immediate selection gates.</li>
+</ol>
+<p>The deployment posture is now also clear:</p>
+<ol>
+<li><strong>Local execution now.</strong>  Personally controlled SSH/VM worktrees are a
+future nice-to-have, not part of the immediate solution.  Third-party hosted
+sandboxes are out of current scope.</li>
+<li><strong>No outer-harness repository-data egress.</strong>  The control plane must not
+send repository metadata, file names, diffs, terminal output, prompts, or
+other repository-derived data to its vendor.  Non-repository usage telemetry
+such as selected model or mode is acceptable.  This constraint concerns the
+outer harness, separately from the chosen model provider receiving the
+context needed to perform an agent task.</li>
+<li><strong>OSS-first.</strong>  Prefer an inspectable, forkable coordinator that can be
+retained if its vendor disappears.  Proprietary tools remain useful
+comparison targets, but may enter the solution only after their local-data
+behavior is verified and their unique operational benefit is compelling.</li>
+<li><strong>Pragmatic connectivity.</strong>  Since current harnesses depend on network
+model access, offline lane control is a convenience rather than a selection
+gate.  Choose straightforward local behavior; do not add offline complexity
+prematurely.</li>
+<li><strong>Controlled aggression.</strong>  Future remote execution may automatically
+provision/tear down worktrees, forward ports, and launch agents.  Automation
+should be assertive against the backlog, while durable review gates, explicit
+human decisions, and recovery safeguards constrain destructive or ambiguous
+actions.</li>
+</ol>
+<p>This strengthens the layered recommendation: favor an OSS local substrate and
+retain a small portable policy/protocol layer; treat proprietary local tools
+such as Orca or Conductor as conditional pilots rather than assumed foundations;
+and replace duplicated pieces only after a scenario test proves an alternative&#39;s
+reliability and data behavior.</p>
+</main>
+</body>
+</html>
