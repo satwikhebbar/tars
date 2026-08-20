@@ -38,9 +38,11 @@ export class AoeClient {
     await execFileAsync(this.command, args)
   }
 
-  async addSession(worktreePath, tool, title) {
+  async addSession(worktreePath, tool, title, { group } = {}) {
     const before = await this.listSessions()
-    await execFileAsync(this.command, ["add", worktreePath, "--tool", tool, "--title", title])
+    const args = ["add", worktreePath, "--tool", tool, "--title", title]
+    if (group) args.push("--group", group)
+    await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
     return session
@@ -156,7 +158,7 @@ export async function validatePair(client, worktreePath, pair) {
 /** Creates an initially empty pair in one worktree, then returns its validated IDs. */
 export async function createPair(client, worktreePath) {
   const suffix = worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
-  await client.addSession(worktreePath, "opencode", `Review loop OpenCode (${suffix})`)
-  await client.addSession(worktreePath, "codex", `Review loop Codex (${suffix})`)
+  await client.addSession(worktreePath, "opencode", `Review loop OpenCode (${suffix})`, { group: worktreePath })
+  await client.addSession(worktreePath, "codex", `Review loop Codex (${suffix})`, { group: worktreePath })
   return discoverPair(client, worktreePath)
 }

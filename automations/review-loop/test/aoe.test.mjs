@@ -58,8 +58,8 @@ class CreateAoe extends ListAoe {
     this.added = []
   }
 
-  async addSession(path, tool, title) {
-    this.added.push({ path, tool, title })
+  async addSession(path, tool, title, { group } = {}) {
+    this.added.push({ path, tool, title, group })
     this.sessionList.push({ id: tool === "opencode" ? "new-open" : "new-codex", path, tool })
   }
 }
