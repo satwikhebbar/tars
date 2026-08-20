@@ -1,6 +1,26 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { closeLane, issueOpeningPrompt, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, registerLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+
+test("groups both sessions when registering an existing lane", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+
+  await registerLane({
+    aoe,
+    state,
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    maxRounds: 5,
+    roles,
+    pair: { authorSessionId: "open-44", reviewerSessionId: "codex-44" },
+  })
+
+  assert.deepEqual(aoe.moved, [
+    ["open-44", "TARS/issue-44-add-calendar-export"],
+    ["codex-44", "TARS/issue-44-add-calendar-export"],
+  ])
+})
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
   const aoe = new FakeAoe()
@@ -24,6 +44,9 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   ])
   assert.equal(aoe.sent[0].sessionId, "open-44")
   assert.equal(aoe.titles[0], "issue-44-add-calendar-export")
+  assert.equal(aoe.groups[0], "TARS/issue-44-add-calendar-export")
+  assert.deepEqual(aoe.moved, [["open-44", "TARS/issue-44-add-calendar-export"]])
+  assert.deepEqual(aoe.reviewerOptions, { extraArgs: [], group: "TARS/issue-44-add-calendar-export" })
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
   assert.match(aoe.sent[0].message, /direct-build: begin implementation now/)
   assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
@@ -197,19 +220,27 @@ class FakeAoe {
     this.sessions = []
     this.removed = []
     this.runtime = []
+    this.groups = []
+    this.moved = []
   }
 
-  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [] } = {}) {
+  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group } = {}) {
     this.added.push([repoPath, branch])
     this.titles.push(title)
     this.extraArgs = extraArgs
+    this.groups.push(group)
     return { id: "open-44", path: "/repo--issue-44-add-calendar-export" }
   }
 
-  async addSession(path, tool, { extraArgs = [] } = {}) {
+  async addSession(path, tool, title, { extraArgs = [], group } = {}) {
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
+    this.reviewerOptions = { extraArgs, group }
     return { id: "codex-44", path }
+  }
+
+  async moveSessionToGroup(sessionId, group) {
+    this.moved.push([sessionId, group])
   }
 
   async send(sessionId, message) {
