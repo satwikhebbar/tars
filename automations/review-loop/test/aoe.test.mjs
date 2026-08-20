@@ -22,6 +22,10 @@ test("creates a pair only when discovery finds none", async () => {
   const pair = await createPair(client, WORKTREE)
   assert.deepEqual(pair, { opencodeSessionId: "new-open", codexSessionId: "new-codex" })
   assert.equal(client.added.length, 2)
+  assert.equal(client.added[0].tool, "opencode")
+  assert.equal(client.added[0].group, WORKTREE)
+  assert.equal(client.added[1].tool, "codex")
+  assert.equal(client.added[1].group, WORKTREE)
 })
 
 test("waits for visible terminal content before treating a new session as ready", async () => {
