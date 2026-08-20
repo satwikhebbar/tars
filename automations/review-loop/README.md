@@ -47,6 +47,23 @@ node commands/install.mjs opencode tars-build --force
 
 For `planning: not_required`, TARS follows the original direct Build → code-review loop. The command prints the created worktree and both session IDs, then sends the appropriate opening issue prompt. It does not start another polling loop.
 
+### Claude Code productivity note
+
+TARS currently launches Claude Code with its normal `claude` command, so its
+user-level permission mode applies to every new Claude lane. To reduce routine
+permission prompts on a trusted local machine, set this in
+`~/.claude/settings.json`:
+
+```json
+{
+  "permissions": { "defaultMode": "auto" }
+}
+```
+
+`auto` uses Claude Code's safety checks rather than unconditionally approving
+all actions. TARS does not yet expose this as a lane-level option; see the
+backlog for harness-controlled launch settings.
+
 Run one watcher to serve every registered lane:
 
 ```bash
