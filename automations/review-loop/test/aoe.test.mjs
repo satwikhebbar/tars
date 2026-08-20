@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
+import { createPair, discoverPair, groupForWorktree, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
 
@@ -22,6 +22,12 @@ test("creates a pair only when discovery finds none", async () => {
   const pair = await createPair(client, WORKTREE)
   assert.deepEqual(pair, { opencodeSessionId: "new-open", codexSessionId: "new-codex" })
   assert.equal(client.added.length, 2)
+  assert.deepEqual(client.added.map((entry) => entry.options), [{ group: "TARS/kipp-review" }, { group: "TARS/kipp-review" }])
+})
+
+test("derives a stable TARS group from a worktree path", () => {
+  assert.equal(groupForWorktree("/repo-worktrees/issue-44-add-calendar-export"), "TARS/issue-44-add-calendar-export")
+  assert.equal(groupForWorktree("/"), "TARS/worktree")
 })
 
 test("requires explicit bindings when author and reviewer use the same harness", async () => {
@@ -65,8 +71,8 @@ class CreateAoe extends ListAoe {
     this.added = []
   }
 
-  async addSession(path, tool, title) {
-    this.added.push({ path, tool, title })
+  async addSession(path, tool, title, options) {
+    this.added.push({ path, tool, title, options })
     this.sessionList.push({ id: tool === "opencode" ? "new-open" : "new-codex", path, tool })
   }
 }
