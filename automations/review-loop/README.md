@@ -1,17 +1,28 @@
 # Agent review loop
 
-`agent-review-loop` is a local coordinator for one author and one reviewer session per git worktree. OpenCode, Codex, Claude Code, and Cursor can fill either role (including two separate sessions of the same harness). AoE sends turns, and `.agent-handoff/` files are the durable workflow protocol.
+`agent-review-loop` is a local coordinator for one author and one reviewer session per git worktree. AoE sends turns, and `.agent-handoff/` files are the durable workflow protocol. Roles are independent: any supported harness can be either the author or reviewer, including two separate sessions of the same harness.
+
+## Supported harnesses
+
+TARS currently supports these AoE-backed harnesses:
+
+- OpenCode
+- Codex
+- Claude Code
+- Cursor
+
+Setup lists only the harnesses currently installed through AoE. You choose default author and reviewer harnesses during setup, then can override either role when launching a lane.
 
 ## Start a lane
 
-Start both AoE sessions in the same worktree, then run:
+Start both AoE sessions in the same worktree, then run `start` with their roles. This OpenCode-author/Codex-reviewer pairing is one example:
 
 ```bash
 node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree \
   --author opencode --reviewer codex
 ```
 
-Run `node setup.mjs` once to select installed default roles. Per-lane flags override those defaults. The command discovers one session of each selected tool whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
+Run `node setup.mjs` once to select installed default roles. Per-lane flags override those defaults. The command discovers one session of each selected harness whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
 
 ```bash
 node automations/review-loop/cli.mjs start \
@@ -93,12 +104,12 @@ TARS resolves only one registered worktree matching its `issue-44-<slug>`
 naming convention. If none or more than one match, it fails and requires the
 explicit `--worktree` path instead.
 
-This removes the Codex AoE session first, then has AoE remove the OpenCode
+This removes the reviewer AoE session first, then has AoE remove the author
 session together with its managed worktree and local branch. It only accepts an
 `approved` registered lane, refuses a worktree shared with unrelated AoE
 sessions, and retains the lane record if AoE cannot complete cleanup.
 
-To abort a lane before approval, first stop both its OpenCode and Codex AoE
+To abort a lane before approval, first stop both author and reviewer AoE
 sessions. Once AoE reports both tmux panes as dead, use the explicit override:
 
 ```bash
