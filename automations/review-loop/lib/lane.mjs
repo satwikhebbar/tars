@@ -1,6 +1,13 @@
+import { groupForWorktree } from "./aoe.mjs"
+
 /** Registers an existing pair without starting another coordinator poller. */
 export async function registerLane({ aoe, state, worktreePath, maxRounds, roles, pair, createSessions = false }) {
   const selected = createSessions ? await aoe.createPair(worktreePath, roles) : pair ?? await aoe.discoverPair(worktreePath, roles)
+  const group = groupForWorktree(worktreePath)
+  const authorSessionId = selected.authorSessionId ?? selected.opencodeSessionId
+  const reviewerSessionId = selected.reviewerSessionId ?? selected.codexSessionId
+  await aoe.moveSessionToGroup(authorSessionId, group)
+  await aoe.moveSessionToGroup(reviewerSessionId, group)
   state.saveLane({ worktreePath, ...selected, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
   return selected
 }
@@ -8,13 +15,16 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, roles,
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
 export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel, roles, provision }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+  const group = groupForWorktree(worktreeName)
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
     extraArgs: planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [],
+    group,
   })
   const worktreePath = author.path
   await provision?.(worktreePath)
-  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`)
+  await aoe.moveSessionToGroup(author.id, group)
+  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, { group })
   state.saveLane({
     worktreePath,
     authorSessionId: author.id,

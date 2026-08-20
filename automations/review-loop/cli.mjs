@@ -209,7 +209,8 @@ function laneAoe(client) {
       const existing = await findWorktreeSession(client, repoPath, branch, options.tool)
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
-    addSession: (worktreePath, tool, title) => client.addSession(worktreePath, tool, title),
+    addSession: (worktreePath, tool, title, options) => client.addSession(worktreePath, tool, title, options),
+    moveSessionToGroup: (sessionId, group) => client.moveSessionToGroup(sessionId, group),
     send: (sessionId, message) => client.send(sessionId, message),
     listSessions: () => client.listSessions(),
     runtimeSessions: (options) => client.runtimeSessions(options),
