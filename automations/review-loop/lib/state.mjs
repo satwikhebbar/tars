@@ -30,6 +30,12 @@ export class StateStore {
         plan_verdict_id TEXT,
         iteration_count INTEGER NOT NULL DEFAULT 1,
         current_iteration INTEGER NOT NULL DEFAULT 1,
+        author_session_id TEXT,
+        reviewer_session_id TEXT,
+        author_harness TEXT,
+        reviewer_harness TEXT,
+        author_tool TEXT,
+        reviewer_tool TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS dispatched_events (
@@ -50,6 +56,12 @@ export class StateStore {
       "plan_verdict_id TEXT",
       "iteration_count INTEGER NOT NULL DEFAULT 1",
       "current_iteration INTEGER NOT NULL DEFAULT 1",
+      "author_session_id TEXT",
+      "reviewer_session_id TEXT",
+      "author_harness TEXT",
+      "reviewer_harness TEXT",
+      "author_tool TEXT",
+      "reviewer_tool TEXT",
     ]) {
       try {
         this.database.exec(`ALTER TABLE lanes ADD COLUMN ${column}`)
@@ -65,12 +77,22 @@ export class StateStore {
   }
 
   saveLane(lane) {
+    const authorSessionId = lane.authorSessionId ?? lane.opencodeSessionId
+    const reviewerSessionId = lane.reviewerSessionId ?? lane.codexSessionId
+    const authorHarness = lane.authorHarness ?? "opencode"
+    const reviewerHarness = lane.reviewerHarness ?? "codex"
+    const authorTool = lane.authorTool ?? "opencode"
+    const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worktree_path) DO UPDATE SET
-          opencode_session_id = excluded.opencode_session_id,
-          codex_session_id = excluded.codex_session_id,
+          author_session_id = excluded.author_session_id,
+          reviewer_session_id = excluded.reviewer_session_id,
+          author_harness = excluded.author_harness,
+          reviewer_harness = excluded.reviewer_harness,
+          author_tool = excluded.author_tool,
+          reviewer_tool = excluded.reviewer_tool,
           state = excluded.state,
           max_rounds = excluded.max_rounds,
           planning = excluded.planning,
@@ -86,8 +108,14 @@ export class StateStore {
           updated_at = excluded.updated_at`)
       .run(
         lane.worktreePath,
-        lane.opencodeSessionId,
-        lane.codexSessionId,
+        authorSessionId,
+        reviewerSessionId,
+        authorSessionId,
+        reviewerSessionId,
+        authorHarness,
+        reviewerHarness,
+        authorTool,
+        reviewerTool,
         lane.state,
         lane.maxRounds,
         lane.planning ?? "not_required",
@@ -110,7 +138,7 @@ export class StateStore {
   }
 
   lanes() {
-    return this.database.prepare("SELECT * FROM lanes ORDER BY worktree_path").all().map(toLane)
+    return this.database.prepare("SELECT * FROM lanes ORDER BY worktree_path").all().map(toLane).filter((lane) => lane.authorSessionId && lane.reviewerSessionId)
   }
 
   deleteLane(worktreePath) {
@@ -135,8 +163,12 @@ export class StateStore {
 function toLane(row) {
   return {
     worktreePath: row.worktree_path,
-    opencodeSessionId: row.opencode_session_id,
-    codexSessionId: row.codex_session_id,
+    authorSessionId: row.author_session_id,
+    reviewerSessionId: row.reviewer_session_id,
+    authorHarness: row.author_harness,
+    reviewerHarness: row.reviewer_harness,
+    authorTool: row.author_tool,
+    reviewerTool: row.reviewer_tool,
     state: row.state,
     maxRounds: row.max_rounds,
     planning: row.planning,

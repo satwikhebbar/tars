@@ -1,26 +1,33 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process"
-import { mkdtemp, realpath, rm } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
+import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { StateStore } from "./lib/state.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
 const execFileAsync = promisify(execFile)
+const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 
 async function main() {
   const { positionals, values } = parseArgs({
     args: process.argv.slice(2),
     options: {
       worktree: { type: "string" },
-      opencode: { type: "string" },
-      codex: { type: "string" },
+      "author-session": { type: "string" },
+      "reviewer-session": { type: "string" },
+      author: { type: "string" },
+      reviewer: { type: "string" },
+      config: { type: "string" },
       state: { type: "string" },
       interval: { type: "string" },
       "max-rounds": { type: "string" },
@@ -41,10 +48,11 @@ async function main() {
   const state = new StateStore(values.state ?? defaultStatePath())
   await state.open()
   try {
-    if (command === "start") await start({ values, state })
+    const config = await loadHarnessConfig(values.config)
+    if (command === "start") await start({ values, state, config })
     else if (command === "watch") await watch({ values, state })
-    else if (command === "lane" && positionals[1] === "register") await register({ values, state })
-    else if (command === "lane" && positionals[1] === "start") await launch({ values, state })
+    else if (command === "lane" && positionals[1] === "register") await register({ values, state, config })
+    else if (command === "lane" && positionals[1] === "start") await launch({ values, state, config })
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
     else if (command === "status") printStatus(state)
     else printUsage()
@@ -53,14 +61,20 @@ async function main() {
   }
 }
 
-async function start({ values, state }) {
+function rolesFor(values, config) {
+  return { author: resolveHarness(config, values.author ?? config.defaults.author), reviewer: resolveHarness(config, values.reviewer ?? config.defaults.reviewer) }
+}
+
+async function start({ values, state, config }) {
   if (!values.worktree) throw new Error("start requires --worktree <path>")
   const worktreePath = await realpath(values.worktree)
   const aoe = new AoeClient()
-  const selectedPair = await selectPair(aoe, worktreePath, values)
-  const pair = await validatePair(aoe, worktreePath, selectedPair)
+  const roles = rolesFor(values, config)
+  await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
+  const selectedPair = await selectPair(aoe, worktreePath, values, roles)
+  const pair = await validatePair(aoe, worktreePath, selectedPair, roles)
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
-  state.saveLane({ worktreePath, ...pair, state: "watching", maxRounds })
+  state.saveLane({ worktreePath, ...pair, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
   await watch({ values, state, aoe })
 }
 
@@ -76,22 +90,28 @@ async function watch({ values, state, aoe = new AoeClient() }) {
   await waitForInterrupt(processOnce, interval)
 }
 
-async function register({ values, state }) {
+async function register({ values, state, config }) {
   if (!values.worktree) throw new Error("lane register requires --worktree <path>")
   const worktreePath = await realpath(values.worktree)
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
+  const roles = rolesFor(values, config)
+  await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
+  await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
   const aoe = laneAoe(new AoeClient())
-  const pair = await registerLane({ aoe, state, worktreePath, maxRounds, createSessions: values["create-sessions"] })
-  console.log(`registered: ${worktreePath}\t${pair.opencodeSessionId}\t${pair.codexSessionId}`)
+  const pair = await registerLane({ aoe, state, worktreePath, maxRounds, roles, pair: explicitPair(values), createSessions: values["create-sessions"] })
+  console.log(`registered: ${worktreePath}\t${pair.authorSessionId}\t${pair.reviewerSessionId}`)
 }
 
-async function launch({ values, state }) {
+async function launch({ values, state, config }) {
   if (!values.repo || !values.issue) throw new Error("lane start requires --repo <path> and --issue <number>")
   const issueNumber = positiveInteger(values.issue, undefined, "--issue")
   const repoPath = await realpath(values.repo)
   const issue = await readIssue(repoPath, issueNumber)
+  const roles = rolesFor(values, config)
+  if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")
+  await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
   const fallback = fallbackLanePreflight(issue)
-  const preflight = values.planning === "always" || values.planning === "never" ? fallback : await chooseLanePreflight(issue, runNamer)
+  const preflight = values.planning === "always" || values.planning === "never" ? fallback : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt).catch(() => ""))
   const planning = resolvePlanning(values.planning, preflight.planning)
   const names = values.branch
     ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
@@ -106,10 +126,13 @@ async function launch({ values, state }) {
     worktreeName: values["worktree-name"] ?? names.worktreeName,
     maxRounds,
     planning,
-    planModel: values["plan-model"],
+    planModel: values["plan-model"], roles,
+    provision: async (worktreePath) => {
+      await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
+    },
     openingPrompt: values.prompt ?? (planning === "required" ? planOpeningPrompt(issue) : issueOpeningPrompt(issue)),
   })
-  console.log(`started: ${lane.worktreePath}\t${lane.opencodeSessionId}\t${lane.codexSessionId}\t${names.branch}`)
+  console.log(`started: ${lane.worktreePath}\t${lane.authorSessionId}\t${lane.reviewerSessionId}\t${names.branch}`)
 }
 
 async function close({ values, state }) {
@@ -122,20 +145,26 @@ async function close({ values, state }) {
   console.log(`closed: ${worktreePath}`)
 }
 
-async function selectPair(aoe, worktreePath, values) {
-  if (values.opencode && values.codex) return { opencodeSessionId: values.opencode, codexSessionId: values.codex }
-  if (values.opencode || values.codex) throw new Error("Specify both --opencode and --codex, or neither.")
+function explicitPair(values) {
+  if (values["author-session"] && values["reviewer-session"]) return { authorSessionId: values["author-session"], reviewerSessionId: values["reviewer-session"] }
+  if (values["author-session"] || values["reviewer-session"]) throw new Error("Specify both --author-session and --reviewer-session, or neither.")
+  return null
+}
+
+async function selectPair(aoe, worktreePath, values, roles) {
+  const explicit = explicitPair(values)
+  if (explicit) return explicit
   try {
-    return await discoverPair(aoe, worktreePath)
+    return await discoverPair(aoe, worktreePath, roles)
   } catch (error) {
     if (!values["create-sessions"]) throw error
-    return createPair(aoe, worktreePath)
+    return createPair(aoe, worktreePath, roles)
   }
 }
 
 function printStatus(state) {
   for (const lane of state.lanes())
-    console.log(`${lane.worktreePath}\t${lane.state}\t${lane.opencodeSessionId}\t${lane.codexSessionId}`)
+    console.log(`${lane.worktreePath}\t${lane.state}\t${lane.authorHarness}\t${lane.authorSessionId}\t${lane.reviewerHarness}\t${lane.reviewerSessionId}`)
 }
 
 function defaultStatePath() {
@@ -164,20 +193,20 @@ async function waitForInterrupt(tick, interval) {
 
 function printUsage() {
   console.log(`Usage:
-  node automations/review-loop/cli.mjs start --worktree <path> [--opencode <session-id> --codex <session-id> | --create-sessions] [--once]
+  node automations/review-loop/cli.mjs start --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions] [--once]
   node automations/review-loop/cli.mjs watch [--once]
-  node automations/review-loop/cli.mjs lane register --worktree <path> [--create-sessions]
-  node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
+  node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
   node automations/review-loop/cli.mjs status`)
 }
 
 function laneAoe(client) {
   return {
-    discoverPair: (worktreePath) => discoverPair(client, worktreePath),
-    createPair: (worktreePath) => createPair(client, worktreePath),
-    findOrCreateWorktreeSession: async (repoPath, branch, title, options) => {
-      const existing = await findWorktreeSession(client, repoPath, branch)
+    discoverPair: (worktreePath, roles) => discoverPair(client, worktreePath, roles),
+    createPair: (worktreePath, roles) => createPair(client, worktreePath, roles),
+    findOrCreateWorktreeSession: async (repoPath, branch, title, options = {}) => {
+      const existing = await findWorktreeSession(client, repoPath, branch, options.tool)
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title) => client.addSession(worktreePath, tool, title),
@@ -195,16 +224,16 @@ function resolvePlanning(value, suggested) {
   throw new Error("--planning must be auto, always, or never")
 }
 
-async function findWorktreeSession(client, repoPath, branch) {
+async function findWorktreeSession(client, repoPath, branch, tool) {
   const sessions = await client.listSessions()
   const normalizedRepoPath = `${repoPath.replace(/\/$/, "")}/`
   const matching = sessions.filter(
     (session) =>
-      session.tool === "opencode" &&
+      session.tool === tool &&
       session.worktree?.branch === branch &&
       session.worktree?.main_repo_path === normalizedRepoPath,
   )
-  if (matching.length > 1) throw new Error(`Found ${matching.length} existing OpenCode sessions for branch ${branch}.`)
+  if (matching.length > 1) throw new Error(`Found ${matching.length} existing ${tool} sessions for branch ${branch}.`)
   return matching[0]
 }
 
@@ -218,18 +247,6 @@ async function readIssue(repoPath, issueNumber) {
   return { ...result, labels: result.labels.map((label) => label.name) }
 }
 
-async function runNamer(prompt) {
-  const temporaryDirectory = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "tars-lane-namer-"))
-  try {
-    const { stdout } = await execFileAsync("opencode", ["run", "--pure", "--dir", temporaryDirectory, prompt], {
-      timeout: 60_000,
-      maxBuffer: 1_000_000,
-    })
-    return stdout
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true })
-  }
-}
 
 await main().catch((error) => {
   console.error(error instanceof Error ? error.message : error)

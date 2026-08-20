@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { cp, lstat, mkdir, rm } from "node:fs/promises"
-import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { lstat } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
+import { BUILTIN_HARNESSES, provisionHarnessSkills } from "../automations/review-loop/lib/harnesses.mjs"
 
 const SKILLS_ROOT = dirname(fileURLToPath(import.meta.url))
 
@@ -12,38 +12,17 @@ async function main() {
     args: process.argv.slice(2),
     options: {
       worktree: { type: "string" },
-      "codex-home": { type: "string" },
-      "opencode-home": { type: "string" },
       force: { type: "boolean", default: false },
     },
     allowPositionals: true,
   })
   const [agent, skill] = positionals
-  if (!agent || !skill || !["codex", "opencode"].includes(agent)) return usage()
+  if (!agent || !skill || !BUILTIN_HARNESSES[agent]) return usage()
 
-  const source = join(SKILLS_ROOT, agent, skill)
-  await assertDirectory(source, `Unknown ${agent} skill: ${skill}`)
-  const destination = destinationFor(agent, skill, values)
-  await install(source, destination, values.force)
-  console.log(`Installed ${agent}/${skill} → ${destination}`)
-}
-
-function destinationFor(agent, skill, values) {
-  if (agent === "codex") return join(values["codex-home"] ?? join(homedir(), ".codex"), "skills", skill)
-  if (values.worktree) return join(resolve(values.worktree), ".opencode", "skills", skill)
-  return join(values["opencode-home"] ?? join(homedir(), ".config", "opencode"), "skills", skill)
-}
-
-async function install(source, destination, force) {
-  try {
-    await lstat(destination)
-    if (!force) throw new Error(`${destination} already exists; re-run with --force to replace it.`)
-    await rm(destination, { recursive: true, force: true })
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error
-  }
-  await mkdir(dirname(destination), { recursive: true })
-  await cp(source, destination, { recursive: true })
+  const source = join(SKILLS_ROOT, "shared", skill)
+  await assertDirectory(source, `Unknown shared TARS skill: ${skill}`)
+  await provisionHarnessSkills({ root: dirname(SKILLS_ROOT), harness: BUILTIN_HARNESSES[agent], worktreePath: values.worktree, force: values.force })
+  console.log(`Installed shared TARS skills for ${agent}`)
 }
 
 async function assertDirectory(path, message) {
@@ -57,9 +36,7 @@ async function assertDirectory(path, message) {
 
 function usage() {
   console.log(`Usage:
-  node skills/install.mjs codex <skill> [--codex-home <path>] [--force]
-  node skills/install.mjs opencode <skill> [--opencode-home <path>] [--force]  # global: ~/.config/opencode
-  node skills/install.mjs opencode <skill> --worktree <path> [--force]         # per-worktree: <path>/.opencode`)
+  node skills/install.mjs <opencode|codex|claude|cursor> <skill> [--worktree <path>] [--force]`)
 }
 
 await main().catch((error) => {

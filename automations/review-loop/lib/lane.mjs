@@ -1,29 +1,38 @@
 /** Registers an existing pair without starting another coordinator poller. */
-export async function registerLane({ aoe, state, worktreePath, maxRounds, createSessions = false }) {
-  const pair = createSessions ? await aoe.createPair(worktreePath) : await aoe.discoverPair(worktreePath)
-  state.saveLane({ worktreePath, ...pair, state: "watching", maxRounds })
-  return pair
+export async function registerLane({ aoe, state, worktreePath, maxRounds, roles, pair, createSessions = false }) {
+  const selected = createSessions ? await aoe.createPair(worktreePath, roles) : pair ?? await aoe.discoverPair(worktreePath, roles)
+  state.saveLane({ worktreePath, ...selected, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
+  return selected
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel }) {
-  const opencode = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel, roles, provision }) {
+  roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+  const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
+    tool: roles.author.tool,
     extraArgs: planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [],
   })
-  const codex = await aoe.addSession(opencode.path, "codex", `Issue ${issue.number} reviewer`)
-  const worktreePath = opencode.path
+  const worktreePath = author.path
+  await provision?.(worktreePath)
+  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`)
   state.saveLane({
     worktreePath,
-    opencodeSessionId: opencode.id,
-    codexSessionId: codex.id,
+    authorSessionId: author.id,
+    reviewerSessionId: reviewer.id,
+    opencodeSessionId: author.id,
+    codexSessionId: reviewer.id,
+    authorHarness: roles.author.key,
+    reviewerHarness: roles.reviewer.key,
+    authorTool: roles.author.tool,
+    reviewerTool: roles.reviewer.tool,
     state: "watching",
     maxRounds,
     planning,
     phase: planning === "required" ? "planning" : "building",
     planModel: planModel ?? null,
   })
-  await aoe.send(opencode.id, openingPrompt)
-  return { worktreePath, opencodeSessionId: opencode.id, codexSessionId: codex.id }
+  await aoe.send(author.id, openingPrompt)
+  return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
 }
 
 /**
@@ -32,7 +41,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
  * worktree and branch deletion.
  */
 export async function closeLane({ aoe, state, worktreePath, force = false }) {
-  const lane = state.lane(worktreePath)
+  const lane = normalizeLane(state.lane(worktreePath))
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
   if (lane.state !== "approved" && !force) {
     throw new Error(`Lane ${worktreePath} is ${lane.state}; only approved lanes can be closed.`)
@@ -40,7 +49,7 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
 
   const sessions = await aoe.listSessions()
   const sessionsInWorktree = sessions.filter((session) => session.path === worktreePath)
-  const expectedIds = new Set([lane.opencodeSessionId, lane.codexSessionId])
+  const expectedIds = new Set([lane.authorSessionId, lane.reviewerSessionId])
   const unexpected = sessionsInWorktree.filter((session) => !expectedIds.has(session.id))
   if (unexpected.length) {
     throw new Error(
@@ -48,29 +57,40 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
     )
   }
 
-  const opencode = sessions.find((session) => session.id === lane.opencodeSessionId)
-  const codex = sessions.find((session) => session.id === lane.codexSessionId)
-  if (opencode && (opencode.path !== worktreePath || opencode.tool !== "opencode")) {
-    throw new Error(`AoE session ${opencode.id} is no longer the registered OpenCode session for ${worktreePath}.`)
+  const author = sessions.find((session) => session.id === lane.authorSessionId)
+  const reviewer = sessions.find((session) => session.id === lane.reviewerSessionId)
+  if (author && (author.path !== worktreePath || author.tool !== lane.authorTool)) {
+    throw new Error(`AoE session ${author.id} is no longer the registered author session for ${worktreePath}.`)
   }
-  if (codex && (codex.path !== worktreePath || codex.tool !== "codex")) {
-    throw new Error(`AoE session ${codex.id} is no longer the registered Codex session for ${worktreePath}.`)
+  if (reviewer && (reviewer.path !== worktreePath || reviewer.tool !== lane.reviewerTool)) {
+    throw new Error(`AoE session ${reviewer.id} is no longer the registered reviewer session for ${worktreePath}.`)
   }
-  if (!opencode && !codex) {
+  if (!author && !reviewer) {
     throw new Error(
       `Neither registered AoE session exists for ${worktreePath}; cannot safely release its worktree lock.`,
     )
   }
 
   if (force) {
-    await assertStoppedDeadSessions(aoe, [lane.opencodeSessionId, lane.codexSessionId])
+    await assertStoppedDeadSessions(aoe, [lane.authorSessionId, lane.reviewerSessionId])
   }
 
-  if (opencode && codex) await aoe.removeSession(codex.id)
-  const finalSession = opencode ?? codex
+  if (author && reviewer) await aoe.removeSession(reviewer.id)
+  const finalSession = author ?? reviewer
   await aoe.removeSession(finalSession.id, { deleteWorktree: true, deleteBranch: true })
   state.deleteLane(worktreePath)
   return lane
+}
+
+function normalizeLane(lane) {
+  if (!lane) return lane
+  return {
+    ...lane,
+    authorSessionId: lane.authorSessionId ?? lane.opencodeSessionId,
+    reviewerSessionId: lane.reviewerSessionId ?? lane.codexSessionId,
+    authorTool: lane.authorTool ?? "opencode",
+    reviewerTool: lane.reviewerTool ?? "codex",
+  }
 }
 
 /**
@@ -111,9 +131,9 @@ async function assertStoppedDeadSessions(aoe, sessionIds) {
 }
 
 export function issueOpeningPrompt(issue) {
-  return `You are the implementation agent for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response.`
+  return `You are the author for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nThis lane is direct-build: begin implementation now. Its next durable artifact is an implementation-response handoff; do not ask the user to choose a planning workflow or create a plan artifact. Use the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response with created_by: author.`
 }
 
 export function planOpeningPrompt(issue) {
-  return `You are the planning agent for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree. Remain in Plan mode: inspect and design only; do not edit implementation files. Write the requested plan artifact under plans/, commit that plan artifact, then follow handoff-review to publish a plan-review handoff for Codex. Do not begin implementation until TARS reports that Codex approved the plan.`
+  return `You are the author planning GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree. Remain in Plan mode: inspect and design only; do not edit implementation files. Write the requested plan artifact under plans/, commit that plan artifact, then follow handoff-review to publish a plan-review handoff with created_by: author. Do not begin implementation until TARS reports that the reviewer approved the plan.`
 }

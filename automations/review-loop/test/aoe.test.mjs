@@ -24,6 +24,13 @@ test("creates a pair only when discovery finds none", async () => {
   assert.equal(client.added.length, 2)
 })
 
+test("requires explicit bindings when author and reviewer use the same harness", async () => {
+  const roles = { author: { tool: "claude", displayName: "Claude" }, reviewer: { tool: "claude", displayName: "Claude" } }
+  const client = new ListAoe([{ id: "author", path: WORKTREE, tool: "claude" }, { id: "reviewer", path: WORKTREE, tool: "claude" }])
+  await assert.rejects(() => discoverPair(client, WORKTREE, roles), /supply explicit --author-session/)
+  assert.deepEqual(await validatePair(client, WORKTREE, { authorSessionId: "author", reviewerSessionId: "reviewer" }, roles), { authorSessionId: "author", reviewerSessionId: "reviewer" })
+})
+
 test("waits for visible terminal content before treating a new session as ready", async () => {
   const captures = [{ content: "" }, { content: "OpenCode is ready" }]
   const waits = []

@@ -1,21 +1,23 @@
 # Agent review loop
 
-`agent-review-loop` is a local coordinator for one OpenCode implementation session and one Codex review session per git worktree. AoE sends turns, and `.agent-handoff/` files are the durable workflow protocol.
+`agent-review-loop` is a local coordinator for one author and one reviewer session per git worktree. OpenCode, Codex, Claude Code, and Cursor can fill either role (including two separate sessions of the same harness). AoE sends turns, and `.agent-handoff/` files are the durable workflow protocol.
 
 ## Start a lane
 
 Start both AoE sessions in the same worktree, then run:
 
 ```bash
-node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree
+node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree \
+  --author opencode --reviewer codex
 ```
 
-The command discovers exactly one `opencode` and one `codex` AoE session whose path matches the canonical worktree path, persists the pair under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist; it creates and launches blank AoE sessions in that worktree. Pass both IDs to override discovery:
+Run `node setup.mjs` once to select installed default roles. Per-lane flags override those defaults. The command discovers one session of each selected tool whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
 
 ```bash
 node automations/review-loop/cli.mjs start \
   --worktree /absolute/path/to/worktree \
-  --opencode <aoe-session-id> --codex <aoe-session-id>
+  --author claude --reviewer claude \
+  --author-session <aoe-session-id> --reviewer-session <aoe-session-id>
 ```
 
 Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View registered lanes with `node automations/review-loop/cli.mjs status`.
@@ -26,16 +28,16 @@ When a lane creates a new AoE session, TARS waits for the agent's terminal UI
 to be ready before sending its first prompt. This avoids losing that prompt
 during session startup.
 
-For a new GitHub issue, let TARS ask OpenCode for a branch-name suggestion in a bounded, read-only preflight. TARS validates a single machine-readable directive, falls back to a deterministic name if necessary, and then lets AoE create the worktree and launch the one persistent OpenCode implementation session:
+For a new GitHub issue, TARS asks the selected author for a branch-name suggestion in a bounded, read-only preflight. TARS validates a single machine-readable directive, falls back to a deterministic plan-first name if necessary, and then lets AoE create the worktree and launch the role-bound sessions:
 
 ```bash
 node automations/review-loop/cli.mjs lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
-  --planning auto
+  --author claude --reviewer codex --planning auto
 ```
 
-The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid preflight falls back to the safer plan-first path. Pass `--plan-model <provider/model>` to launch a plan-first OpenCode session with a specific model.
+The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path. `--plan-model <provider/model>` is available only when OpenCode is the author.
 
 For `planning: required`, TARS launches OpenCode with its `plan` agent, waits for Codex to approve the `plan-review`, sends `/compact`, then invokes the global `/tars-build` command to continue in OpenCode's `build` agent. Install that command once before starting a plan-first lane:
 

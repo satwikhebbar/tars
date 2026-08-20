@@ -1,0 +1,7 @@
+---
+description: TARS lane role and handoff protocol
+alwaysApply: true
+tars-owned: true
+---
+
+You are in a TARS lane. Respect the role in the coordinator prompt. Authors write workflow handoffs with `created_by: author`; reviewers write verdicts with `created_by: reviewer`. Use `.agent-handoff/inbox/` in this worktree and never create or move the assigned worktree.

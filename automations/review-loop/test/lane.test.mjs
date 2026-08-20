@@ -25,6 +25,8 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(aoe.sent[0].sessionId, "open-44")
   assert.equal(aoe.titles[0], "issue-44-add-calendar-export")
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
+  assert.match(aoe.sent[0].message, /direct-build: begin implementation now/)
+  assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
   assert.equal(state.entries[0].codexSessionId, "codex-44")
   assert.equal(state.entries[0].phase, "building")
 })
@@ -46,6 +48,21 @@ test("starts a planning lane with OpenCode plan arguments", async () => {
   })
   assert.deepEqual(aoe.extraArgs, ["--agent", "plan", "--model", "deepseek/v4-pro"])
   assert.equal(state.entries[0].phase, "planning")
+})
+
+test("allows the same harness in separate author and reviewer roles", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = { author: { key: "claude", tool: "claude" }, reviewer: { key: "claude", tool: "claude" } }
+  await startLane({
+    aoe, state, roles, repoPath: "/repo", issue: { number: 8, title: "Role flexibility" }, branch: "issue/8-role-flexibility",
+    worktreeName: "issue-8-role-flexibility", maxRounds: 5, planning: "not_required", openingPrompt: "author prompt",
+  })
+  assert.deepEqual(aoe.added, [["/repo", "issue/8-role-flexibility"], ["/repo--issue-44-add-calendar-export", "claude"]])
+  assert.equal(state.entries[0].authorHarness, "claude")
+  assert.equal(state.entries[0].reviewerHarness, "claude")
+  assert.equal(state.entries[0].authorTool, "claude")
+  assert.equal(state.entries[0].reviewerTool, "claude")
 })
 
 test("closes an approved lane through AoE before deleting its worktree", async () => {

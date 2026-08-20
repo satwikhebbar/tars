@@ -6,7 +6,7 @@ const HANDOFF_DIRECTORIES = ["inbox", "done"]
 const ACTIVE_STATES = new Set(["idle", "waiting"])
 const COMPACTION_SETTLE_MS = 2_000
 
-/** Coordinates one persisted AoE pair per worktree through durable handoff files. */
+/** Coordinates one persisted author/reviewer pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
   constructor({ aoe, state }) {
     this.aoe = aoe
@@ -43,7 +43,7 @@ export class ReviewLoopCoordinator {
       }
       if (event.destination === "terminal") {
         if (event.outcome === "approved") {
-          const sessionId = lane.opencodeSessionId
+          const sessionId = lane.authorSessionId
           if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
           if (hasNextIteration(lane, event)) {
             const nextIteration = lane.currentIteration + 1
@@ -53,7 +53,7 @@ export class ReviewLoopCoordinator {
             )
             this.state.saveLane({ ...lane, state: "implementing", phase: "building", currentIteration: nextIteration })
             this.state.markDispatched(lane.worktreePath, event.key)
-            results.push({ event, action: `sent:opencode:iteration-${nextIteration}` })
+            results.push({ event, action: `sent:author:iteration-${nextIteration}` })
             break
           }
           await this.aoe.send(sessionId, promptFor(lane, event))
@@ -63,9 +63,16 @@ export class ReviewLoopCoordinator {
         results.push({ event, action: event.outcome })
         break
       }
-      const sessionId = event.destination === "codex" ? lane.codexSessionId : lane.opencodeSessionId
+      const sessionId = event.destination === "reviewer" ? lane.reviewerSessionId : lane.authorSessionId
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
-      if (event.destination === "opencode" && event.reviewKind === "plan" && event.outcome === "approved") {
+      if (event.destination === "author" && event.reviewKind === "plan" && event.outcome === "approved") {
+        if (lane.authorHarness !== "opencode") {
+          await this.aoe.send(sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1))
+          this.state.markDispatched(lane.worktreePath, event.key)
+          this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1 })
+          results.push({ event, action: "sent:author:build" })
+          break
+        }
         this.state.saveLane({
           ...lane,
           state: "compacting",
@@ -80,17 +87,17 @@ export class ReviewLoopCoordinator {
         })
         await this.aoe.send(sessionId, "/compact")
         this.state.markDispatched(lane.worktreePath, event.key)
-        results.push({ event, action: "sent:opencode:compact" })
+        results.push({ event, action: "sent:author:compact" })
         break
       }
-      await this.aoe.send(sessionId, opencodePrompt(lane, event))
+      await this.aoe.send(sessionId, authorPrompt(lane, event))
       this.state.markDispatched(lane.worktreePath, event.key)
       this.state.saveLane({
         ...lane,
-        state: event.destination === "codex" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
+        state: event.destination === "reviewer" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
         phase: event.reopensLane ? "post_pr_feedback" : lane.phase,
       })
-      results.push({ event, action: `sent:${event.destination}` })
+      results.push({ event, action: `sent:${event.destination === "reviewer" ? lane.reviewerHarness : lane.authorHarness}` })
       break
     }
     return results
@@ -100,12 +107,12 @@ export class ReviewLoopCoordinator {
     if (lane.phase !== "compacting") return null
     const requestedAt = Date.parse(lane.transitionRequestedAt ?? "")
     if (!Number.isFinite(requestedAt) || Date.now() - requestedAt < COMPACTION_SETTLE_MS) return null
-    const state = String(states.get(lane.opencodeSessionId)).toLowerCase()
+    const state = String(states.get(lane.authorSessionId)).toLowerCase()
     if (!ACTIVE_STATES.has(state)) return null
     const eventKey = `plan-build:${lane.transitionWorkflowId}:${lane.transitionHandoffPath}`
     if (this.state.hasDispatched(lane.worktreePath, eventKey)) return null
     await this.aoe.send(
-      lane.opencodeSessionId,
+      lane.authorSessionId,
       iterationPrompt(lane, lane.transitionWorkflowId, await planVerdictPathFor(lane), lane.currentIteration),
     )
     this.state.markDispatched(lane.worktreePath, eventKey)
@@ -117,7 +124,7 @@ export class ReviewLoopCoordinator {
       transitionWorkflowId: null,
       transitionRequestedAt: null,
     })
-    return { event: { handoff: { metadata: { id: lane.transitionWorkflowId } } }, action: "sent:opencode:build" }
+    return { event: { handoff: { metadata: { id: lane.transitionWorkflowId } } }, action: "sent:author:build" }
   }
 }
 
@@ -169,16 +176,16 @@ async function planVerdictPathFor(lane) {
 
 function classifyEvent(handoff) {
   const { metadata } = handoff
-  if (metadata.type === "plan-review" && metadata.created_by === "opencode" && !metadata.outcome) {
+  if (metadata.type === "plan-review" && ["author", "opencode"].includes(metadata.created_by) && !metadata.outcome) {
     return {
       key: `plan:${metadata.id}`,
       handoff,
       round: metadata.round,
-      destination: "codex",
+      destination: "reviewer",
       reviewKind: "plan",
     }
   }
-  if (metadata.type === "plan-review-verdict" && typeof metadata.outcome === "string") {
+  if (metadata.type === "plan-review-verdict" && ["reviewer", "codex"].includes(metadata.created_by) && typeof metadata.outcome === "string") {
     if (metadata.outcome === "blocked") {
       return {
         key: `plan-verdict:${metadata.id}:blocked`,
@@ -193,24 +200,24 @@ function classifyEvent(handoff) {
         key: `plan-verdict:${metadata.id}:${metadata.outcome}`,
         handoff,
         round: metadata.round,
-        destination: "opencode",
+        destination: "author",
         outcome: metadata.outcome,
         reviewKind: "plan",
       }
     }
   }
-  if (metadata.type === "implementation-response" && typeof metadata.head_commit === "string") {
+  if (metadata.type === "implementation-response" && (!metadata.created_by || ["author", "opencode"].includes(metadata.created_by)) && typeof metadata.head_commit === "string") {
     return {
       key: `implementation:${metadata.id}:${metadata.head_commit}`,
       handoff,
       round: metadata.round,
-      destination: "codex",
+      destination: "reviewer",
       reviewKind: "code",
       iteration: iterationFor(metadata),
       reopensLane: metadata.reopen === true,
     }
   }
-  if (metadata.type === "code-review" && typeof metadata.outcome === "string") {
+  if (metadata.type === "code-review" && (!metadata.created_by || ["reviewer", "codex"].includes(metadata.created_by)) && typeof metadata.outcome === "string") {
     if (metadata.outcome === "approved" || metadata.outcome === "blocked") {
       return {
         key: `review:${metadata.id}:${metadata.outcome}`,
@@ -227,7 +234,7 @@ function classifyEvent(handoff) {
         key: `review:${metadata.id}:changes_requested`,
         handoff,
         round: metadata.round,
-        destination: "opencode",
+        destination: "author",
         reviewKind: "code",
         iteration: iterationFor(metadata),
       }
@@ -242,11 +249,11 @@ function compareEvents(left, right) {
 
 function promptFor(lane, event) {
   const path = event.handoff.path
-  if (event.destination === "codex" && event.reviewKind === "plan") {
-    return `Review-loop: use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count and a numbered Implementation Iterations schedule. Do not implement the plan or edit implementation files.`
+  if (event.destination === "reviewer" && event.reviewKind === "plan") {
+    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count and a numbered Implementation Iterations schedule. Do not implement the plan or edit implementation files.`
   }
-  if (event.destination === "codex") {
-    return `Review-loop: use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
+  if (event.destination === "reviewer") {
+    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
   }
   if (event.destination === "terminal" && event.outcome === "approved") {
     if (lane.phase === "post_pr_feedback") {
@@ -254,7 +261,7 @@ function promptFor(lane, event) {
     }
     return `Review-loop: the handoff review is approved and complete. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not make implementation changes unless needed to resolve a push or PR blocker.`
   }
-  if (event.destination === "opencode" && event.reviewKind === "plan") {
+  if (event.destination === "author" && event.reviewKind === "plan") {
     if (event.outcome === "approved") {
       return ""
     }
@@ -263,9 +270,9 @@ function promptFor(lane, event) {
   return `Review-loop: read ${path}, apply the requested review changes for iteration ${event.iteration}, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. Do not request a manual handoff.`
 }
 
-function opencodePrompt(lane, event) {
+function authorPrompt(lane, event) {
   const prompt = promptFor(lane, event)
-  if (event.destination === "opencode" && lane.planning === "required" && lane.phase === "building") {
+  if (event.destination === "author" && lane.authorHarness === "opencode" && lane.planning === "required" && lane.phase === "building") {
     return `/tars-build ${prompt}`
   }
   return prompt
@@ -291,5 +298,6 @@ function hasNextIteration(lane, event) {
 }
 
 function iterationPrompt(lane, workflowId, planVerdictPath, iteration) {
-  return `/tars-build Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with workflow_id ${workflowId}, iteration ${iteration}, and head_commit. Do not start a later iteration, push, or create a pull request yet.`
+  const prompt = `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, iteration ${iteration}, and head_commit. Do not start a later iteration, push, or create a pull request yet.`
+  return lane.authorHarness === "opencode" ? `/tars-build ${prompt}` : prompt
 }

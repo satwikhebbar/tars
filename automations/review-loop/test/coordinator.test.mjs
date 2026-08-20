@@ -40,6 +40,27 @@ test("accepts a numeric issue number as the stable workflow ID", async () => {
   fixture.state.close()
 })
 
+test("routes role-based author handoffs to a non-Codex reviewer and ignores the wrong role", async () => {
+  const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "cursor" })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/ignored.md", `id: wrong-role\ntype: implementation-response\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\nhead_commit: abc123`)
+  await writeWorkflowHandoff(fixture.worktree, "inbox/author.md", `id: author-response\ntype: implementation-response\ncreated_by: author\nworkflow_id: 45\nround: 1\nhead_commit: def456`)
+  const result = await fixture.coordinator.processAll()
+  assert.equal(result[0].action, "sent:cursor")
+  assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1"])
+  fixture.state.close()
+})
+
+test("a non-OpenCode author starts approved plan work without an OpenCode compact command", async () => {
+  const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/plan-verdict.md", `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 1`)
+  const result = await fixture.coordinator.processAll()
+  assert.equal(result[0].action, "sent:author:build")
+  assert.equal(fixture.aoe.sent[0].sessionId, "opencode-1")
+  assert.doesNotMatch(fixture.aoe.sent[0].message, /^\/compact$/)
+  assert.doesNotMatch(fixture.aoe.sent[0].message, /^\/tars-build/)
+  fixture.state.close()
+})
+
 test("plan approval compacts then starts Build mode without approving the lane", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
@@ -191,7 +212,7 @@ test("a lane blocks instead of dispatching beyond its round limit", async () => 
   fixture.state.close()
 })
 
-async function laneFixture({ maxRounds = 5 } = {}) {
+async function laneFixture({ maxRounds = 5, authorHarness = "opencode", reviewerHarness = "codex" } = {}) {
   const worktree = await mkdtemp(join(tmpdir(), "agent-review-loop-"))
   await Promise.all([
     mkdir(join(worktree, ".agent-handoff", "inbox"), { recursive: true }),
@@ -203,6 +224,12 @@ async function laneFixture({ maxRounds = 5 } = {}) {
     worktreePath: worktree,
     opencodeSessionId: "opencode-1",
     codexSessionId: "codex-1",
+    authorSessionId: "opencode-1",
+    reviewerSessionId: "codex-1",
+    authorHarness,
+    reviewerHarness,
+    authorTool: authorHarness,
+    reviewerTool: reviewerHarness,
     state: "watching",
     maxRounds,
     planning: "required",
