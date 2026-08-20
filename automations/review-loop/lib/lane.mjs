@@ -1,6 +1,13 @@
+import { groupForWorktree } from "./aoe.mjs"
+
 /** Registers an existing pair without starting another coordinator poller. */
 export async function registerLane({ aoe, state, worktreePath, maxRounds, roles, pair, createSessions = false }) {
   const selected = createSessions ? await aoe.createPair(worktreePath, roles) : pair ?? await aoe.discoverPair(worktreePath, roles)
+  const group = groupForWorktree(worktreePath)
+  const authorSessionId = selected.authorSessionId ?? selected.opencodeSessionId
+  const reviewerSessionId = selected.reviewerSessionId ?? selected.codexSessionId
+  await aoe.moveSessionToGroup(authorSessionId, group)
+  await aoe.moveSessionToGroup(reviewerSessionId, group)
   state.saveLane({ worktreePath, ...selected, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
   return selected
 }
@@ -13,8 +20,13 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" ? ["--agent", "plan", ...(planModel ? ["--model", planModel] : [])] : [])],
   })
   const worktreePath = author.path
+  const group = groupForWorktree(worktreePath)
   await provision?.(worktreePath)
-  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, { extraArgs: roles.reviewer.launchArgs ?? [] })
+  await aoe.moveSessionToGroup(author.id, group)
+  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
+    extraArgs: roles.reviewer.launchArgs ?? [],
+    group,
+  })
   state.saveLane({
     worktreePath,
     authorSessionId: author.id,

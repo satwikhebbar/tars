@@ -38,17 +38,18 @@ export class AoeClient {
     await execFileAsync(this.command, args)
   }
 
-  async addSession(worktreePath, tool, title, { extraArgs = [] } = {}) {
+  async addSession(worktreePath, tool, title, { extraArgs = [], group } = {}) {
     const before = await this.listSessions()
     const args = ["add", worktreePath, "--tool", tool, "--title", title]
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
+    if (group) args.push("--group", group)
     await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
     return session
   }
 
-  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [] } = {}) {
+  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group } = {}) {
     const before = await this.listSessions()
     const args = [
       "add",
@@ -61,6 +62,7 @@ export class AoeClient {
       branch,
       "--new-branch",
     ]
+    if (group) args.push("--group", group)
     // AoE forwards this value to the OpenCode process when the session starts.
     // Keep it a single argument because AoE owns shell splitting at that boundary.
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
@@ -68,6 +70,10 @@ export class AoeClient {
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
     return session
+  }
+
+  async moveSessionToGroup(sessionId, group) {
+    await execFileAsync(this.command, ["group", "move", sessionId, group])
   }
 
   async startSession(sessionId) {
@@ -182,7 +188,14 @@ export async function createPair(client, worktreePath, roles) {
   const legacyShape = !roles
   roles ??= { author: { tool: "opencode", displayName: "OpenCode" }, reviewer: { tool: "codex", displayName: "Codex" } }
   const suffix = worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
-  await client.addSession(worktreePath, roles.author.tool, `TARS author (${suffix})`, { extraArgs: roles.author.launchArgs ?? [] })
-  await client.addSession(worktreePath, roles.reviewer.tool, `TARS reviewer (${suffix})`, { extraArgs: roles.reviewer.launchArgs ?? [] })
+  const group = groupForWorktree(worktreePath)
+  await client.addSession(worktreePath, roles.author.tool, `TARS author (${suffix})`, { extraArgs: roles.author.launchArgs ?? [], group })
+  await client.addSession(worktreePath, roles.reviewer.tool, `TARS reviewer (${suffix})`, { extraArgs: roles.reviewer.launchArgs ?? [], group })
   return discoverPair(client, worktreePath, legacyShape ? undefined : roles)
+}
+
+/** Provides a stable, visible AoE group for both sessions in one TARS lane. */
+export function groupForWorktree(worktreePath) {
+  const name = worktreePath.split("/").filter(Boolean).at(-1) || "worktree"
+  return `TARS/${name}`
 }
