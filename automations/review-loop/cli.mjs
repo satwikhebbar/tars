@@ -8,7 +8,7 @@ import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
-import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { closeLane, groupLaneSessions, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { StateStore } from "./lib/state.mjs"
@@ -73,6 +73,7 @@ async function start({ values, state, config }) {
   await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
   const selectedPair = await selectPair(aoe, worktreePath, values, roles)
   const pair = await validatePair(aoe, worktreePath, selectedPair, roles)
+  await groupLaneSessions(aoe, worktreePath, pair)
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
   state.saveLane({ worktreePath, ...pair, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
   await watch({ values, state, aoe })
@@ -210,6 +211,7 @@ function laneAoe(client) {
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title) => client.addSession(worktreePath, tool, title),
+    moveSessionToGroup: (sessionId, worktreePath) => client.moveSessionToGroup(sessionId, worktreePath),
     send: (sessionId, message) => client.send(sessionId, message),
     listSessions: () => client.listSessions(),
     runtimeSessions: (options) => client.runtimeSessions(options),

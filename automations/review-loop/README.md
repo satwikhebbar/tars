@@ -70,6 +70,11 @@ Run one watcher to serve every registered lane:
 node automations/review-loop/cli.mjs watch
 ```
 
+TARS places each lane's author and reviewer sessions in an AoE group named for
+that lane's worktree basename (for example, `issue-44-add-calendar-export`).
+This is strictly an operator-facing association: the persisted TARS lane record
+remains the source of truth for session roles and workflow state.
+
 Register an existing worktree/session pair without creating a competing watcher:
 
 ```bash

@@ -31,6 +31,11 @@ export class AoeClient {
     await execFileAsync(this.command, ["send", sessionId, message])
   }
 
+  /** Places a session in its TARS-managed, filesystem-safe lane group. */
+  async moveSessionToGroup(sessionId, group) {
+    await execFileAsync(this.command, ["group", "move", sessionId, group])
+  }
+
   async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false } = {}) {
     const args = ["remove", sessionId]
     if (deleteWorktree) args.push("--delete-worktree")
