@@ -1,3 +1,5 @@
+import { basename } from "node:path"
+
 /** Registers an existing pair without starting another coordinator poller. */
 export async function registerLane({ aoe, state, worktreePath, maxRounds, roles, pair, createSessions = false }) {
   const selected = createSessions ? await aoe.createPair(worktreePath, roles) : pair ?? await aoe.discoverPair(worktreePath, roles)
@@ -37,12 +39,13 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
 }
 
-/** Gives both role-bound sessions one visible, canonical AoE worktree group. */
+/** Gives both role-bound sessions one visible, filesystem-safe AoE worktree group. */
 export async function groupLaneSessions(aoe, worktreePath, pair) {
   const authorSessionId = pair.authorSessionId ?? pair.opencodeSessionId
   const reviewerSessionId = pair.reviewerSessionId ?? pair.codexSessionId
-  await aoe.moveSessionToGroup(authorSessionId, worktreePath)
-  await aoe.moveSessionToGroup(reviewerSessionId, worktreePath)
+  const group = basename(worktreePath)
+  await aoe.moveSessionToGroup(authorSessionId, group)
+  await aoe.moveSessionToGroup(reviewerSessionId, group)
 }
 
 /**

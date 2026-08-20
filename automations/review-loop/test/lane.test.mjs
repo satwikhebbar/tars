@@ -28,8 +28,8 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.match(aoe.sent[0].message, /direct-build: begin implementation now/)
   assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
   assert.deepEqual(aoe.grouped, [
-    ["open-44", "/repo--issue-44-add-calendar-export"],
-    ["codex-44", "/repo--issue-44-add-calendar-export"],
+    ["open-44", "repo--issue-44-add-calendar-export"],
+    ["codex-44", "repo--issue-44-add-calendar-export"],
   ])
   assert.equal(state.entries[0].codexSessionId, "codex-44")
   assert.equal(state.entries[0].phase, "building")
@@ -66,7 +66,7 @@ test("groups registered existing sessions by their canonical worktree path", asy
     roles: { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } },
     pair: { authorSessionId: "open-44", reviewerSessionId: "codex-44" },
   })
-  assert.deepEqual(aoe.grouped, [["open-44", worktreePath], ["codex-44", worktreePath]])
+  assert.deepEqual(aoe.grouped, [["open-44", "issue-44-add-calendar-export"], ["codex-44", "issue-44-add-calendar-export"]])
 })
 
 test("allows the same harness in separate author and reviewer roles", async () => {
