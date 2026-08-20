@@ -8,7 +8,7 @@ import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, validatePair } from "./lib/aoe.mjs"
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
-import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { StateStore } from "./lib/state.mjs"
@@ -74,7 +74,7 @@ async function start({ values, state, config }) {
   const selectedPair = await selectPair(aoe, worktreePath, values, roles)
   const pair = await validatePair(aoe, worktreePath, selectedPair, roles)
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
-  state.saveLane({ worktreePath, ...pair, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
+  await startExistingLane({ aoe, state, worktreePath, pair, roles, maxRounds })
   await watch({ values, state, aoe })
 }
 

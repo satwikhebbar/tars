@@ -1,5 +1,22 @@
 import { groupForWorktree } from "./aoe.mjs"
 
+/** Starts watching an existing pair after placing both role-bound sessions in its lane group. */
+export async function startExistingLane({ aoe, state, worktreePath, pair, roles, maxRounds }) {
+  const group = groupForWorktree(worktreePath)
+  await aoe.moveSessionToGroup(pair.authorSessionId, group)
+  await aoe.moveSessionToGroup(pair.reviewerSessionId, group)
+  state.saveLane({
+    worktreePath,
+    ...pair,
+    authorHarness: roles.author.key,
+    reviewerHarness: roles.reviewer.key,
+    authorTool: roles.author.tool,
+    reviewerTool: roles.reviewer.tool,
+    state: "watching",
+    maxRounds,
+  })
+}
+
 /** Registers an existing pair without starting another coordinator poller. */
 export async function registerLane({ aoe, state, worktreePath, maxRounds, roles, pair, createSessions = false }) {
   const selected = createSessions ? await aoe.createPair(worktreePath, roles) : pair ?? await aoe.discoverPair(worktreePath, roles)

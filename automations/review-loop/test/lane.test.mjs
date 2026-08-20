@@ -1,6 +1,27 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { closeLane, issueOpeningPrompt, registerLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+
+test("groups both sessions before watching an existing pair", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+
+  await startExistingLane({
+    aoe,
+    state,
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    pair: { authorSessionId: "open-44", reviewerSessionId: "codex-44" },
+    roles,
+    maxRounds: 5,
+  })
+
+  assert.deepEqual(aoe.moved, [
+    ["open-44", "TARS/issue-44-add-calendar-export"],
+    ["codex-44", "TARS/issue-44-add-calendar-export"],
+  ])
+  assert.equal(state.entries[0].state, "watching")
+})
 
 test("groups both sessions when registering an existing lane", async () => {
   const aoe = new FakeAoe()
