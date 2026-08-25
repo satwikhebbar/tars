@@ -40,6 +40,23 @@ test("accepts a numeric issue number as the stable workflow ID", async () => {
   fixture.state.close()
 })
 
+test("surfaces a malformed workflow handoff and resumes after it is corrected", async () => {
+  const fixture = await laneFixture()
+  const frontmatter = "id: missing-round\ntype: implementation-response\nworkflow_id: 64\nhead_commit: abc123"
+  await writeWorkflowHandoff(fixture.worktree, "inbox/response.md", frontmatter)
+
+  const invalid = await fixture.coordinator.processAll()
+  assert.match(invalid[0].action, /invalid-handoff: missing positive integer round/)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "invalid_handoff")
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  await writeWorkflowHandoff(fixture.worktree, "inbox/response.md", `${frontmatter}\nround: 1`)
+  const recovered = await fixture.coordinator.processAll()
+  assert.equal(recovered[0].action, "sent:codex")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
+  fixture.state.close()
+})
+
 test("routes role-based author handoffs to a non-Codex reviewer and ignores the wrong role", async () => {
   const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "cursor" })
   await writeWorkflowHandoff(fixture.worktree, "inbox/ignored.md", `id: wrong-role\ntype: implementation-response\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\nhead_commit: abc123`)
@@ -66,7 +83,7 @@ test("plan approval compacts then starts Build mode without approving the lane",
   await writeWorkflowHandoff(
     fixture.worktree,
     "inbox/plan.md",
-    `id: 53-plan-review-1\ntype: plan-review\ncreated_by: opencode\nworkflow_id: 53\nround: 1`,
+    `id: 53-plan-review-1\ntype: plan-review\ncreated_by: opencode\nworkflow_id: 53\nround: 1\ntarget:\n  - plans/example.md`,
   )
   await fixture.coordinator.processAll()
   assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1"])
@@ -75,7 +92,7 @@ test("plan approval compacts then starts Build mode without approving the lane",
   await writeWorkflowHandoff(
     fixture.worktree,
     "inbox/plan-verdict.md",
-    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\nresponds_to: 53-plan-review-1`,
+    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 1\nresponds_to: 53-plan-review-1`,
   )
   await fixture.coordinator.processAll()
   assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1", "opencode-1"])
@@ -89,6 +106,7 @@ test("plan approval compacts then starts Build mode without approving the lane",
   assert.equal(fixture.state.lane(fixture.worktree).phase, "building")
   assert.match(fixture.aoe.sent[2].message, /^\/tars-build /)
   assert.match(fixture.aoe.sent[2].message, /Continue the approved TARS plan/)
+  assert.match(fixture.aoe.sent[2].message, /round 2/)
   assert.doesNotMatch(fixture.aoe.sent[2].message, /push the approved branch/i)
   fixture.state.close()
 })

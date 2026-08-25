@@ -1,6 +1,6 @@
 import { access, readdir } from "node:fs/promises"
 import { join } from "node:path"
-import { isWorkflowHandoff, readHandoff } from "./handoff.mjs"
+import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWorkflowHandoff } from "./handoff.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 const ACTIVE_STATES = new Set(["idle", "waiting"])
@@ -21,7 +21,19 @@ export class ReviewLoopCoordinator {
 
   async processLane(lane) {
     if (lane.state === "blocked") return []
-    const handoffs = await handoffsFor(lane.worktreePath)
+    const { handoffs, invalidHandoffs } = await handoffsFor(lane.worktreePath)
+    if (invalidHandoffs.length) {
+      if (lane.state !== "invalid_handoff") {
+        const invalid = invalidHandoffs[0]
+        this.state.saveLane({ ...lane, state: "invalid_handoff" })
+        return [{ event: { handoff: { metadata: { id: invalid.handoff.metadata.id ?? invalid.handoff.path } } }, action: `invalid-handoff: ${invalid.errors.join(", ")}` }]
+      }
+      return []
+    }
+    if (lane.state === "invalid_handoff") {
+      lane = { ...lane, state: "watching" }
+      this.state.saveLane(lane)
+    }
     const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     // A completed lane is normally immutable. The one explicit exception is
     // a fresh implementation response that declares it is addressing feedback
@@ -49,7 +61,7 @@ export class ReviewLoopCoordinator {
             const nextIteration = lane.currentIteration + 1
             await this.aoe.send(
               sessionId,
-              iterationPrompt(lane, event.handoff.metadata.workflow_id, await planVerdictPathFor(lane), nextIteration),
+              iterationPrompt(lane, event.handoff.metadata.workflow_id, await planVerdictPathFor(lane), nextIteration, event.round + 1),
             )
             this.state.saveLane({ ...lane, state: "implementing", phase: "building", currentIteration: nextIteration })
             this.state.markDispatched(lane.worktreePath, event.key)
@@ -67,7 +79,7 @@ export class ReviewLoopCoordinator {
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
       if (event.destination === "author" && event.reviewKind === "plan" && event.outcome === "approved") {
         if (lane.authorHarness !== "opencode") {
-          await this.aoe.send(sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1))
+          await this.aoe.send(sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
           this.state.markDispatched(lane.worktreePath, event.key)
           this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1 })
           results.push({ event, action: "sent:author:build" })
@@ -111,9 +123,11 @@ export class ReviewLoopCoordinator {
     if (!ACTIVE_STATES.has(state)) return null
     const eventKey = `plan-build:${lane.transitionWorkflowId}:${lane.transitionHandoffPath}`
     if (this.state.hasDispatched(lane.worktreePath, eventKey)) return null
+    const planVerdictPath = await planVerdictPathFor(lane)
+    const planVerdict = await readHandoff(planVerdictPath)
     await this.aoe.send(
       lane.authorSessionId,
-      iterationPrompt(lane, lane.transitionWorkflowId, await planVerdictPathFor(lane), lane.currentIteration),
+      iterationPrompt(lane, lane.transitionWorkflowId, planVerdictPath, lane.currentIteration, planVerdict.metadata.round + 1),
     )
     this.state.markDispatched(lane.worktreePath, eventKey)
     this.state.saveLane({
@@ -144,8 +158,12 @@ export async function handoffsFor(worktreePath) {
       if (error?.code !== "ENOENT") throw error
     }
   }
-  const handoffs = await Promise.all(files.map(readHandoff))
-  return handoffs.filter((handoff) => handoff && isWorkflowHandoff(handoff))
+  const parsed = await Promise.all(files.map(readHandoff))
+  const invalidHandoffs = parsed
+    .filter(isWorkflowHandoffCandidate)
+    .filter((handoff) => !isWorkflowHandoff(handoff))
+    .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff) }))
+  return { handoffs: parsed.filter((handoff) => handoff && isWorkflowHandoff(handoff)), invalidHandoffs }
 }
 
 async function planVerdictPathFor(lane) {
@@ -297,7 +315,7 @@ function hasNextIteration(lane, event) {
   return event.reviewKind === "code" && lane.currentIteration < lane.iterationCount
 }
 
-function iterationPrompt(lane, workflowId, planVerdictPath, iteration) {
-  const prompt = `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, iteration ${iteration}, and head_commit. Do not start a later iteration, push, or create a pull request yet.`
+function iterationPrompt(lane, workflowId, planVerdictPath, iteration, round) {
+  const prompt = `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}, and head_commit. Before publishing, run node automations/review-loop/cli.mjs handoff validate --path <handoff-path>; correct every reported error. Do not start a later iteration, push, or create a pull request yet.`
   return lane.authorHarness === "opencode" ? `/tars-build ${prompt}` : prompt
 }

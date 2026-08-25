@@ -8,6 +8,7 @@ import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
+import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
@@ -41,6 +42,7 @@ async function main() {
       "plan-model": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
+      path: { type: "string" },
     },
     allowPositionals: true,
   })
@@ -54,6 +56,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "register") await register({ values, state, config })
     else if (command === "lane" && positionals[1] === "start") await launch({ values, state, config })
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
+    else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
   } finally {
@@ -145,6 +148,14 @@ async function close({ values, state }) {
   console.log(`closed: ${worktreePath}`)
 }
 
+async function validateHandoff({ values }) {
+  if (!values.path) throw new Error("handoff validate requires --path <path>")
+  const handoff = await readHandoff(values.path)
+  const errors = validateWorkflowHandoff(handoff)
+  if (errors.length) throw new Error(`Invalid handoff ${values.path}: ${errors.join(", ")}`)
+  console.log(`valid: ${values.path}`)
+}
+
 function explicitPair(values) {
   if (values["author-session"] && values["reviewer-session"]) return { authorSessionId: values["author-session"], reviewerSessionId: values["reviewer-session"] }
   if (values["author-session"] || values["reviewer-session"]) throw new Error("Specify both --author-session and --reviewer-session, or neither.")
@@ -195,6 +206,7 @@ function printUsage() {
   console.log(`Usage:
   node automations/review-loop/cli.mjs start --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions] [--once]
   node automations/review-loop/cli.mjs watch [--once]
+  node automations/review-loop/cli.mjs handoff validate --path <handoff-file>
   node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
