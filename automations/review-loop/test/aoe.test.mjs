@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, groupForWorktree, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 import { createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
@@ -24,14 +23,17 @@ test("creates a pair only when discovery finds none", async () => {
   assert.deepEqual(pair, { opencodeSessionId: "new-open", codexSessionId: "new-codex" })
   assert.equal(client.added.length, 2)
   assert.deepEqual(client.added.map((entry) => entry.options), [
-    { extraArgs: [], group: "TARS/kipp-review" },
-    { extraArgs: [], group: "TARS/kipp-review" },
+    { extraArgs: [], group: groupForWorktree(WORKTREE) },
+    { extraArgs: [], group: groupForWorktree(WORKTREE) },
   ])
 })
 
 test("derives a stable TARS group from a worktree path", () => {
-  assert.equal(groupForWorktree("/repo-worktrees/issue-44-add-calendar-export"), "TARS/issue-44-add-calendar-export")
-  assert.equal(groupForWorktree("/"), "TARS/worktree")
+  const first = groupForWorktree("/repo-worktrees/issue-44-add-calendar-export")
+  assert.match(first, /^TARS\/issue-44-add-calendar-export-[0-9a-f]{10}$/)
+  assert.equal(groupForWorktree("/repo-worktrees/issue-44-add-calendar-export/"), first)
+  assert.notEqual(first, groupForWorktree("/other-worktrees/issue-44-add-calendar-export"))
+  assert.match(groupForWorktree("/"), /^TARS\/worktree-[0-9a-f]{10}$/)
 })
 
 test("requires explicit bindings when author and reviewer use the same harness", async () => {

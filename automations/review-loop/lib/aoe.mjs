@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 
@@ -196,6 +197,8 @@ export async function createPair(client, worktreePath, roles) {
 
 /** Provides a stable, visible AoE group for both sessions in one TARS lane. */
 export function groupForWorktree(worktreePath) {
-  const name = worktreePath.split("/").filter(Boolean).at(-1) || "worktree"
-  return `TARS/${name}`
+  const normalizedPath = worktreePath.replace(/\/+$/, "") || "/"
+  const name = normalizedPath.split("/").filter(Boolean).at(-1) || "worktree"
+  const identity = createHash("sha256").update(normalizedPath).digest("hex").slice(0, 10)
+  return `TARS/${name}-${identity}`
 }

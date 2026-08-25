@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { groupForWorktree } from "../lib/aoe.mjs"
 import { closeLane, issueOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("groups both sessions before watching an existing pair", async () => {
@@ -17,8 +18,8 @@ test("groups both sessions before watching an existing pair", async () => {
   })
 
   assert.deepEqual(aoe.moved, [
-    ["open-44", "TARS/issue-44-add-calendar-export"],
-    ["codex-44", "TARS/issue-44-add-calendar-export"],
+    ["open-44", groupForWorktree("/repo-worktrees/issue-44-add-calendar-export")],
+    ["codex-44", groupForWorktree("/repo-worktrees/issue-44-add-calendar-export")],
   ])
   assert.equal(state.entries[0].state, "watching")
 })
@@ -38,9 +39,29 @@ test("groups both sessions when registering an existing lane", async () => {
   })
 
   assert.deepEqual(aoe.moved, [
-    ["open-44", "TARS/issue-44-add-calendar-export"],
-    ["codex-44", "TARS/issue-44-add-calendar-export"],
+    ["open-44", groupForWorktree("/repo-worktrees/issue-44-add-calendar-export")],
+    ["codex-44", groupForWorktree("/repo-worktrees/issue-44-add-calendar-export")],
   ])
+})
+
+test("normalizes legacy pair IDs when registering a lane", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+
+  const lane = await registerLane({
+    aoe,
+    state,
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    maxRounds: 5,
+    roles,
+    pair: { opencodeSessionId: "open-44", codexSessionId: "codex-44" },
+  })
+
+  assert.equal(lane.authorSessionId, "open-44")
+  assert.equal(lane.reviewerSessionId, "codex-44")
+  assert.equal(state.entries[0].authorSessionId, "open-44")
+  assert.equal(state.entries[0].reviewerSessionId, "codex-44")
 })
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
@@ -65,9 +86,10 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   ])
   assert.equal(aoe.sent[0].sessionId, "open-44")
   assert.equal(aoe.titles[0], "issue-44-add-calendar-export")
-  assert.equal(aoe.groups[0], "TARS/issue-44-add-calendar-export")
-  assert.deepEqual(aoe.moved, [["open-44", "TARS/issue-44-add-calendar-export"]])
-  assert.deepEqual(aoe.reviewerOptions, { extraArgs: [], group: "TARS/issue-44-add-calendar-export" })
+  const group = groupForWorktree(lane.worktreePath)
+  assert.equal(aoe.groups[0], undefined)
+  assert.deepEqual(aoe.moved, [["open-44", group]])
+  assert.deepEqual(aoe.reviewerOptions, { extraArgs: [], group })
   assert.match(aoe.sent[0].message, /already-created AoE worktree/)
   assert.match(aoe.sent[0].message, /direct-build: begin implementation now/)
   assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
@@ -92,6 +114,27 @@ test("starts a planning lane with OpenCode plan arguments", async () => {
   })
   assert.deepEqual(aoe.extraArgs, ["--agent", "plan", "--model", "deepseek/v4-pro"])
   assert.equal(state.entries[0].phase, "planning")
+})
+
+test("groups a newly started lane by its actual worktree path", async () => {
+  const aoe = new FakeAoe()
+  aoe.worktreePath = "/repo-worktrees/actual-worktree"
+  const state = new FakeState()
+  const lane = await startLane({
+    aoe,
+    state,
+    repoPath: "/repo",
+    issue: { number: 44, title: "Add calendar export" },
+    branch: "issue/44-add-calendar-export",
+    worktreeName: "display-name-only",
+    maxRounds: 5,
+    planning: "not_required",
+    openingPrompt: "build",
+  })
+
+  const group = groupForWorktree(lane.worktreePath)
+  assert.deepEqual(aoe.moved, [["open-44", group]])
+  assert.deepEqual(aoe.reviewerOptions, { extraArgs: [], group })
 })
 
 test("allows the same harness in separate author and reviewer roles", async () => {
@@ -250,7 +293,7 @@ class FakeAoe {
     this.titles.push(title)
     this.extraArgs = extraArgs
     this.groups.push(group)
-    return { id: "open-44", path: "/repo--issue-44-add-calendar-export" }
+    return { id: "open-44", path: this.worktreePath ?? "/repo--issue-44-add-calendar-export" }
   }
 
   async addSession(path, tool, title, { extraArgs = [], group } = {}) {
