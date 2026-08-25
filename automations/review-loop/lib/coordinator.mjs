@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWorkflowHandoff } from "./handoff.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
-const ACTIVE_STATES = new Set(["idle", "waiting"])
+export const ACTIVE_STATES = new Set(["idle", "waiting"])
 const COMPACTION_SETTLE_MS = 2_000
 
 /** Coordinates one persisted author/reviewer pair per worktree through durable handoff files. */
@@ -162,9 +162,23 @@ function activeLaneState(lane) {
 
 /** Reads active handoffs only; archived history is never re-dispatched. */
 export async function handoffsFor(worktreePath) {
+  const entries = await readHandoffs(worktreePath, HANDOFF_DIRECTORIES)
+  const parsed = entries.map((entry) => entry.handoff)
+  const invalidHandoffs = parsed
+    .filter(isWorkflowHandoffCandidate)
+    .filter((handoff) => !isWorkflowHandoff(handoff))
+    .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff) }))
+  return { handoffs: parsed.filter((handoff) => handoff && isWorkflowHandoff(handoff)), invalidHandoffs }
+}
+
+/**
+ * Scans the listed `.agent-handoff/` directories and returns parsed handoffs
+ * that pass the optional filter, with their paths for the callers that need them.
+ */
+export async function readHandoffs(worktreePath, directories, { filter = () => true } = {}) {
   const root = join(worktreePath, ".agent-handoff")
   const files = []
-  for (const directory of HANDOFF_DIRECTORIES) {
+  for (const directory of directories) {
     try {
       const entries = await readdir(join(root, directory), { withFileTypes: true })
       files.push(
@@ -176,12 +190,8 @@ export async function handoffsFor(worktreePath) {
       if (error?.code !== "ENOENT") throw error
     }
   }
-  const parsed = await Promise.all(files.map(readHandoff))
-  const invalidHandoffs = parsed
-    .filter(isWorkflowHandoffCandidate)
-    .filter((handoff) => !isWorkflowHandoff(handoff))
-    .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff) }))
-  return { handoffs: parsed.filter((handoff) => handoff && isWorkflowHandoff(handoff)), invalidHandoffs }
+  const parsed = await Promise.all(files.map(async (path) => ({ path, handoff: await readHandoff(path) })))
+  return parsed.filter(({ handoff }) => handoff && filter(handoff))
 }
 
 async function planVerdictPathFor(lane) {
@@ -191,22 +201,10 @@ async function planVerdictPathFor(lane) {
       return lane.planVerdictPath
     } catch {}
   }
-  const root = join(lane.worktreePath, ".agent-handoff")
-  for (const directory of ["inbox", "in-progress", "done", "archive"]) {
-    let entries
-    try {
-      entries = await readdir(join(root, directory), { withFileTypes: true })
-    } catch (error) {
-      if (error?.code === "ENOENT") continue
-      throw error
-    }
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue
-      const path = join(root, directory, entry.name)
-      const handoff = await readHandoff(path)
-      if (handoff?.metadata.id === lane.planVerdictId) return path
-    }
-  }
+  const matches = await readHandoffs(lane.worktreePath, ["inbox", "in-progress", "done", "archive"], {
+    filter: (handoff) => handoff.metadata.id === lane.planVerdictId,
+  })
+  if (matches.length) return matches[0].path
   throw new Error(`Cannot find approved plan verdict ${lane.planVerdictId} for ${lane.worktreePath}.`)
 }
 

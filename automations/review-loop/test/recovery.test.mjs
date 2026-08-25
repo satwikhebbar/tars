@@ -41,6 +41,24 @@ test("an undispatched event over max_rounds blocks the lane", async () => {
   fixture.state.close()
 })
 
+test("resume without flags is read-only", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  const before = fixture.state.lane(fixture.worktree)
+  const result = await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(result.analysis.verdict, "needs_dispatch")
+  assert.equal(result.action, null)
+  assert.equal(fixture.aoe.sent.length, 0)
+  assert.equal(fixture.aoe.addedSessions.length, 0)
+  assert.equal(fixture.state.dispatchedEvents(fixture.worktree).size, 0)
+  assert.deepEqual(fixture.state.lane(fixture.worktree), before)
+  fixture.state.close()
+})
+
 test("a single pending event with an idle target reports needs_dispatch and dispatches once", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(

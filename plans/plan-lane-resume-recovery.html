@@ -46,7 +46,8 @@ explicit intent.</p>
 <pre><code>node automations/review-loop/cli.mjs lane resume (--worktree &lt;path&gt; | --issue &lt;number&gt;) [--dispatch] [--create-sessions]</code></pre>
 
 <div class="callout">
-<strong>No flags = pure diagnosis.</strong> It never sends prompts, never mutates state, never touches AoE sessions.
+<strong>No flags = pure diagnosis.</strong> It never sends prompts and never mutates lane state or AoE sessions
+(it reads AoE session metadata via <code>listSessions</code>/<code>runtimeSessions</code> for liveness only).
 Action flags (<code>--dispatch</code>, <code>--create-sessions</code>) each enable exactly one recovery action and only when
 the verdict supports it; otherwise the command refuses with the reason and a non-zero exit.
 </div>
@@ -65,7 +66,7 @@ subcommand, tests, and docs.</p>
   <tr><td><code>needs_dispatch</code></td><td>Exactly one actionable pending event (undispatched, in round/iteration limits) whose target session is idle/waiting.</td><td><code>--dispatch</code></td></tr>
   <tr><td><code>stale_delivery</code></td><td>A previously recorded delivery has no advancement evidence, the target session is idle/waiting, and it is older than a staleness threshold. The recorded delivery likely never took effect.</td><td><code>--dispatch</code> (clears the stale journal marker first, then re-dispatches)</td></tr>
   <tr><td><code>in_flight</code></td><td>Already progressing: the target session is busy/running, or a recent dispatch (<em>or the compacting transition</em>) still has no completion — do nothing, avoid duplicate work.</td><td>none</td></tr>
-  <tr><td><code>sessions_missing</code></td><td>A registered OpenCode/Codex session id no longer exists in AoE; the lane cannot advance until re-created.</td><td><code>--create-sessions</code> (then re-analyze)</td></tr>
+  <tr><td><code>sessions_missing</code></td><td>A registered OpenCode/Codex session is absent from AoE, or its id no longer matches the lane's worktree and role; the lane cannot advance until re-created.</td><td><code>--create-sessions</code> (then re-analyze)</td></tr>
   <tr><td><code>inactive_sessions</code></td><td>Sessions exist but are dead or have no runtime record — dispatch would be futile and unsafe.</td><td>none (operator stops/removes via AoE, then <code>--create-sessions</code>)</td></tr>
   <tr><td><code>ambiguous</code></td><td>Multiple actionable pending events, multiple unconfirmed deliveries, or lane state contradicts handoff evidence. List all candidates; never guess.</td><td>none</td></tr>
 </table>
@@ -86,11 +87,16 @@ target session and no advancement is reported as <code>stale_delivery</code>; yo
 <p>Ordered decision procedure (first match wins):</p>
 <ol>
   <li>Lane <code>blocked</code> → <code>blocked</code>. Lane <code>approved</code> with no <code>reopen</code> event → <code>no_action</code>.</li>
-  <li>Registered session id(s) absent from <code>listSessions</code> → <code>sessions_missing</code> (name the missing role).</li>
+  <li>Registered session id(s) absent from <code>listSessions</code> → <code>sessions_missing</code> (name the missing role).
+  A matching id whose worktree path or tool differs from the lane registration is also treated as
+  <code>sessions_missing</code> — it is never a usable dispatch target.</li>
+  <li>A registered session that exists but is dead or has no runtime record → <code>inactive_sessions</code>
+  (checked before evaluating any pending or dispatched event candidates).</li>
   <li>Undispatched event over <code>max_rounds</code> (within iteration) → <code>blocked</code> (max_rounds).</li>
   <li>Multiple actionable pending events → <code>ambiguous</code> (list them). Exactly one → inspect its target session:
   dead → <code>inactive_sessions</code>; busy → <code>in_flight</code>; idle/waiting → <code>needs_dispatch</code>.</li>
-  <li>No pending events. Inspect dispatched-but-unconfirmed events (no advancement):
+  <li>No pending events. Inspect dispatched-but-unconfirmed events (no advancement, within current iteration and
+  <code>max_rounds</code>):
   none → <code>no_action</code>; &gt;1 → <code>ambiguous</code>; exactly one, older than threshold + target idle → <code>stale_delivery</code>;
   busy → <code>in_flight</code>; recent → <code>in_flight</code>; dead → <code>inactive_sessions</code>.</li>
   <li><code>phase === "compacting"</code> anywhere → <code>in_flight</code> (the coordinator's plan→build transition owns it; a watcher pass advances it).</li>
