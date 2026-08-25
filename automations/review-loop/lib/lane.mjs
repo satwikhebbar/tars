@@ -25,8 +25,20 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, roles,
   const reviewerSessionId = selected.reviewerSessionId ?? selected.codexSessionId
   await aoe.moveSessionToGroup(authorSessionId, group)
   await aoe.moveSessionToGroup(reviewerSessionId, group)
-  state.saveLane({ worktreePath, ...selected, authorHarness: roles.author.key, reviewerHarness: roles.reviewer.key, authorTool: roles.author.tool, reviewerTool: roles.reviewer.tool, state: "watching", maxRounds })
-  return selected
+  const lane = {
+    worktreePath,
+    ...selected,
+    authorSessionId,
+    reviewerSessionId,
+    authorHarness: roles.author.key,
+    reviewerHarness: roles.reviewer.key,
+    authorTool: roles.author.tool,
+    reviewerTool: roles.reviewer.tool,
+    state: "watching",
+    maxRounds,
+  }
+  state.saveLane(lane)
+  return lane
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
