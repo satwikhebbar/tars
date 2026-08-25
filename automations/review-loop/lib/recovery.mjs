@@ -1,15 +1,13 @@
-import { readdir } from "node:fs/promises"
-import { join } from "node:path"
 import {
+  ACTIVE_STATES,
   classifyEvent,
   compareEvents,
   handoffsFor,
   matchesCurrentIteration,
   ReviewLoopCoordinator,
+  readHandoffs,
 } from "./coordinator.mjs"
-import { readHandoff } from "./handoff.mjs"
 
-const ACTIVE_STATES = new Set(["idle", "waiting"])
 const STALE_AFTER_MS = 10 * 60 * 1000
 const QUEUE_DIRECTORIES = ["inbox", "in-progress", "done", "archive"]
 const PROGRESSING_STATES = new Set(["reviewing", "implementing", "planning"])
@@ -105,7 +103,13 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     return finish("in_flight", "plan-to-build compact transition is in progress")
   }
 
-  const unconfirmed = events.filter((event) => dispatched.has(event.key) && !hasAdvancement(allHandoffs, event))
+  const unconfirmed = events.filter(
+    (event) =>
+      dispatched.has(event.key) &&
+      matchesCurrentIteration(lane, event) &&
+      event.round <= lane.maxRounds &&
+      !hasAdvancement(allHandoffs, event),
+  )
   analysis.unconfirmed = unconfirmed
 
   if (unconfirmed.length > 1) {
@@ -191,6 +195,9 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
   }
 
   if (analysis.verdict === "stale_delivery") {
+    // Clears the journal marker, then lets processLane re-dispatch through its
+    // normal path. A concurrently polling watcher could observe the cleared
+    // marker in this window, so recovery assumes one dispatcher per lane.
     state.clearDispatched(worktreePath, analysis.nextEvent.key)
   }
 
@@ -259,22 +266,8 @@ function hasAdvancement(handoffs, event) {
 }
 
 async function readAllHandoffs(worktreePath) {
-  const root = join(worktreePath, ".agent-handoff")
-  const files = []
-  for (const directory of QUEUE_DIRECTORIES) {
-    try {
-      const entries = await readdir(join(root, directory), { withFileTypes: true })
-      files.push(
-        ...entries
-          .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-          .map((entry) => join(root, directory, entry.name)),
-      )
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error
-    }
-  }
-  const handoffs = await Promise.all(files.map(readHandoff))
-  return handoffs.filter(Boolean)
+  const entries = await readHandoffs(worktreePath, QUEUE_DIRECTORIES)
+  return entries.map((entry) => entry.handoff)
 }
 
 /** Renders a one-glance, greppable diagnosis for the CLI. */

@@ -182,6 +182,12 @@ one prompt is sent per `--dispatch`, the normal state transitions apply, and
 already-dispatched events are never re-sent unless the delivery is
 `stale_delivery` and the operator chose to retry it.
 
+Recovery assumes one dispatcher per lane. Run `lane resume --dispatch` —
+especially for a `stale_delivery`, which re-journals the event before
+re-dispatching — while the shared watcher is not polling that lane. A
+concurrently running watcher could observe the cleared marker and dispatch the
+same event.
+
 ## Protocol additions
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.

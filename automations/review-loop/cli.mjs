@@ -198,6 +198,7 @@ async function resume({ values, state }) {
     ? await realpath(values.worktree)
     : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
   const result = await resumeLane({
+    // Pass the raw client: processLane needs runningSessions(), which laneAoe() does not expose.
     aoe: new AoeClient(),
     state,
     worktreePath,
