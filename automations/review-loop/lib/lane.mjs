@@ -119,6 +119,7 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
   if (author && reviewer) await aoe.removeSession(reviewer.id)
   const finalSession = author ?? reviewer
   await aoe.removeSession(finalSession.id, { deleteWorktree: true, deleteBranch: true })
+  await aoe.deleteGroup(groupForWorktree(worktreePath))
   state.deleteLane(worktreePath)
   return lane
 }

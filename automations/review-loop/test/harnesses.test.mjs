@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionHarnessSkills, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionHarnessSkills, provisionOpenCodePlanAgent, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 
@@ -41,4 +41,21 @@ test("provisions Cursor's worktree rule once and protects user-owned rules", asy
 
 test("lane-local provisioning does not touch global skills for non-Cursor harnesses", async () => {
   await assert.doesNotReject(() => provisionWorktreeHarnessRequirements({ root: ROOT, harness: { key: "codex", tool: "codex" }, worktreePath: "/does-not-need-to-exist" }))
+})
+
+test("provisions TARS's restricted override for OpenCode's Plan agent", async () => {
+  const home = await mkdtemp(join(tmpdir(), "tars-opencode-home-"))
+  const originalHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    await provisionOpenCodePlanAgent(ROOT)
+    const agent = await readFile(join(home, ".config", "opencode", "agents", "plan.md"), "utf8")
+    assert.match(agent, /tars-owned: true/)
+    assert.match(agent, /"plans\/\*\*": allow/)
+    assert.match(agent, /"\.agent-handoff\/\*\*": allow/)
+    await writeFile(join(home, ".config", "opencode", "agents", "plan.md"), "user-owned\n")
+    await assert.rejects(() => provisionOpenCodePlanAgent(ROOT), /not TARS-owned/)
+  } finally {
+    process.env.HOME = originalHome
+  }
 })

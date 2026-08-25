@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { installedAoeTools, BUILTIN_HARNESSES, loadHarnessConfig, provisionHarnessSkills, provisionOpenCodeCommand, saveHarnessConfig } from "./automations/review-loop/lib/harnesses.mjs"
+import { installedAoeTools, BUILTIN_HARNESSES, loadHarnessConfig, provisionHarnessSkills, provisionOpenCodeCommand, provisionOpenCodePlanAgent, saveHarnessConfig } from "./automations/review-loop/lib/harnesses.mjs"
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 
@@ -20,7 +20,10 @@ async function main() {
     config.defaults = { author, reviewer }
     await saveHarnessConfig(config)
     await Promise.all([provisionHarnessSkills({ root: ROOT, harness: BUILTIN_HARNESSES[author] }), provisionHarnessSkills({ root: ROOT, harness: BUILTIN_HARNESSES[reviewer] })])
-    if (author === "opencode") await provisionOpenCodeCommand(ROOT)
+    if (author === "opencode") {
+      await provisionOpenCodePlanAgent(ROOT)
+      await provisionOpenCodeCommand(ROOT)
+    }
     console.log(`Configured TARS defaults: author=${author}, reviewer=${reviewer}`)
   } finally { rl.close() }
 }

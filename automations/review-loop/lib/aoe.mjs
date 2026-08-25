@@ -77,6 +77,11 @@ export class AoeClient {
     await execFileAsync(this.command, ["group", "move", sessionId, group])
   }
 
+  /** Removes a TARS lane group, returning its retained AoE trash records to the default group. */
+  async deleteGroup(group) {
+    await execFileAsync(this.command, ["group", "delete", group, "--force"])
+  }
+
   async startSession(sessionId) {
     await execFileAsync(this.command, ["session", "start", sessionId])
     await waitForSessionReady(this, sessionId)

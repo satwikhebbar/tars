@@ -97,7 +97,7 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(state.entries[0].phase, "building")
 })
 
-test("starts a planning lane with OpenCode plan arguments", async () => {
+test("starts a planning lane with OpenCode's configured Plan agent", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
   await startLane({
@@ -243,6 +243,7 @@ test("force-closes a stopped non-approved lane, but never a live one", async () 
     ["codex-44", {}],
     ["open-44", { deleteWorktree: true, deleteBranch: true }],
   ])
+  assert.deepEqual(aoe.deletedGroups, [groupForWorktree(worktreePath)])
   assert.equal(state.lane(worktreePath), null)
 })
 
@@ -286,6 +287,7 @@ class FakeAoe {
     this.runtime = []
     this.groups = []
     this.moved = []
+    this.deletedGroups = []
   }
 
   async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group } = {}) {
@@ -305,6 +307,10 @@ class FakeAoe {
 
   async moveSessionToGroup(sessionId, group) {
     this.moved.push([sessionId, group])
+  }
+
+  async deleteGroup(group) {
+    this.deletedGroups.push(group)
   }
 
   async send(sessionId, message) {

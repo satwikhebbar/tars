@@ -211,6 +211,7 @@ function laneAoe(client) {
     },
     addSession: (worktreePath, tool, title, options) => client.addSession(worktreePath, tool, title, options),
     moveSessionToGroup: (sessionId, group) => client.moveSessionToGroup(sessionId, group),
+    deleteGroup: (group) => client.deleteGroup(group),
     send: (sessionId, message) => client.send(sessionId, message),
     listSessions: () => client.listSessions(),
     runtimeSessions: (options) => client.runtimeSessions(options),

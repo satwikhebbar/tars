@@ -50,7 +50,7 @@ node automations/review-loop/cli.mjs lane start \
 
 The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path. `--plan-model <provider/model>` is available only when OpenCode is the author.
 
-For `planning: required`, TARS launches OpenCode with its `plan` agent, waits for Codex to approve the `plan-review`, sends `/compact`, then invokes the global `/tars-build` command to continue in OpenCode's `build` agent. Install that command once before starting a plan-first lane:
+For `planning: required`, TARS launches OpenCode's `plan` agent with TARS's setup-installed permission override. It can write only the durable `plans/` and `.agent-handoff/` artifacts, waits for Codex to approve the `plan-review`, sends `/compact`, then invokes the global `/tars-build` command to continue in OpenCode's `build` agent. `setup.mjs` installs the planning override; install the build command once before starting a plan-first lane:
 
 ```bash
 node commands/install.mjs opencode tars-build --force

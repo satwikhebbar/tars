@@ -100,6 +100,13 @@ export async function provisionOpenCodeCommand(root, force = false) {
   await installOwnedFile(source, destination, force)
 }
 
+/** Installs TARS's restricted override for OpenCode's built-in Plan agent. */
+export async function provisionOpenCodePlanAgent(root, force = false) {
+  const source = join(root, "agents", "opencode", "plan.md")
+  const destination = join(homedir(), ".config", "opencode", "agents", "plan.md")
+  await installOwnedFile(source, destination, force)
+}
+
 async function installOwnedDirectory(source, destination, force) {
   let exists = false
   try {
