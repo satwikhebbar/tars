@@ -43,10 +43,15 @@ async function main() {
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       path: { type: "string" },
+      help: { type: "boolean", short: "h", default: false },
     },
     allowPositionals: true,
   })
   const command = positionals[0] ?? "help"
+  if (values.help) {
+    printUsage()
+    return
+  }
   const state = new StateStore(values.state ?? defaultStatePath())
   await state.open()
   try {
