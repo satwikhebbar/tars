@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { groupForWorktree } from "../lib/aoe.mjs"
-import { closeLane, issueOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("groups both sessions before watching an existing pair", async () => {
   const aoe = new FakeAoe()
@@ -247,6 +250,93 @@ test("force-closes a stopped non-approved lane, but never a live one", async () 
   assert.equal(state.lane(worktreePath), null)
 })
 
+test("recovers a trashed author, re-groups it, and starts it without dispatching work", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo-worktrees/issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    authorTool: "opencode",
+    reviewerTool: "codex",
+    state: "reviewing",
+    maxRounds: 5,
+  })
+  aoe.sessions = [
+    { id: "open-44", path: "/repo-worktrees/.aoe-trash/open-44", tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+  ]
+  aoe.runtime = [{ session: "open-44", state: "dead" }]
+  aoe.restorePath = worktreePath
+
+  const result = await recoverLane({ aoe, state, worktreePath, role: "author" })
+
+  assert.deepEqual(result, {
+    lane: { ...state.entries[0] },
+    sessionId: "open-44",
+    role: "author",
+    restored: true,
+    started: true,
+  })
+  assert.deepEqual(aoe.restored, ["open-44"])
+  assert.deepEqual(aoe.started, ["open-44"])
+  assert.deepEqual(aoe.moved.at(-1), ["open-44", groupForWorktree(worktreePath)])
+  assert.deepEqual(aoe.sent, [])
+})
+
+test("restarts a stopped live reviewer without attempting a trash restore", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo-worktrees/issue-44-add-calendar-export"
+  state.saveLane({ worktreePath, authorSessionId: "open-44", reviewerSessionId: "codex-44", state: "watching", maxRounds: 5 })
+  aoe.sessions = [
+    { id: "open-44", path: worktreePath, tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+  ]
+  aoe.runtime = [{ session: "codex-44", state: "error" }]
+
+  const result = await recoverLane({ aoe, state, worktreePath, role: "reviewer" })
+
+  assert.equal(result.restored, false)
+  assert.equal(result.started, true)
+  assert.deepEqual(aoe.restored, [])
+  assert.deepEqual(aoe.started, ["codex-44"])
+})
+
+test("does not rewrite a valid or unknown trashed git pointer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-recovery-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const trashed = join(root, ".aoe-trash", "author")
+  await mkdir(trashed, { recursive: true })
+  const pointer = "gitdir: ../../repo/.git/worktrees/issue-44\n"
+  await writeFile(join(trashed, ".git"), pointer)
+
+  assert.equal(await prepareTrashedWorktreeGitPointer(trashed, join(root, "issue-44")), null)
+  assert.equal(await readFile(join(trashed, ".git"), "utf8"), pointer)
+})
+
+test("temporarily repairs AoE trash's relative git pointer and restores it at the live path", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-recovery-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const trashed = join(root, "worktrees", ".aoe-trash", "author")
+  const live = join(root, "worktrees", "issue-44")
+  const gitdir = join(root, "repo", ".git", "worktrees", "issue-44")
+  await mkdir(trashed, { recursive: true })
+  await mkdir(gitdir, { recursive: true })
+  const pointer = "gitdir: ../../repo/.git/worktrees/issue-44\n"
+  await writeFile(join(trashed, ".git"), pointer)
+
+  const finalize = await prepareTrashedWorktreeGitPointer(trashed, live)
+
+  assert.ok(finalize)
+  assert.equal(await readFile(join(trashed, ".git"), "utf8"), "gitdir: ../../../repo/.git/worktrees/issue-44\n")
+  await mkdir(live, { recursive: true })
+  await writeFile(join(live, ".git"), "gitdir: temporary\n")
+  await finalize({ restored: true })
+  assert.equal(await readFile(join(live, ".git"), "utf8"), pointer)
+})
+
 test("resolves exactly one conventionally named issue lane", () => {
   const state = new FakeState()
   state.saveLane({
@@ -288,6 +378,8 @@ class FakeAoe {
     this.groups = []
     this.moved = []
     this.deletedGroups = []
+    this.restored = []
+    this.started = []
   }
 
   async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group } = {}) {
@@ -323,6 +415,16 @@ class FakeAoe {
 
   async runtimeSessions() {
     return this.runtime
+  }
+
+  async restoreSession(sessionId) {
+    this.restored.push(sessionId)
+    const session = this.sessions.find((entry) => entry.id === sessionId)
+    session.path = this.restorePath
+  }
+
+  async startSession(sessionId) {
+    this.started.push(sessionId)
   }
 
   async removeSession(sessionId, options = {}) {

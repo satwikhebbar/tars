@@ -120,6 +120,25 @@ node automations/review-loop/cli.mjs lane close --issue 44 --force
 after verifying that both registered session panes are already dead (and makes
 the same verification for an approved lane when supplied).
 
+### Recover an accidentally stopped lane session
+
+If an AoE shortcut has stopped a role session or placed its worktree in AoE
+trash, restore that role using the registered absolute worktree path:
+
+```bash
+node automations/review-loop/cli.mjs lane recover \
+  --worktree /absolute/path/to/worktree \
+  --role author
+```
+
+Recovery restores only the named role, validates its registered harness and
+worktree, restores its lane group, and starts it if it is not running. It also
+repairs AoE's temporary relative `.git`-pointer issue when needed during a
+trash restore. It does not replay a coordinator prompt or advance the lane;
+explicitly tell the recovered harness what to do next after inspecting the
+reported lane state. `--worktree` is required because issue numbers can collide
+across repositories.
+
 ## Protocol additions
 
 Only handoffs carrying all of `id`, `workflow_id`, and integer `round` are actionable. This leaves existing handoff history safe to retain.

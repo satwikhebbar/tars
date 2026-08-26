@@ -13,5 +13,6 @@ for (const args of [["--help"], ["-h"], ["handoff", "--help"]]) {
     assert.equal(stderr, "")
     assert.match(stdout, /^Usage:/)
     assert.match(stdout, /handoff validate --path <handoff-file>/)
+    assert.match(stdout, /lane recover --worktree <path> --role author\|reviewer/)
   })
 }

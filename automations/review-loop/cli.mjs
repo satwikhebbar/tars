@@ -2,14 +2,14 @@
 import { execFile } from "node:child_process"
 import { realpath } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
-import { closeLane, issueOpeningPrompt, planOpeningPrompt, registerLane, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { StateStore } from "./lib/state.mjs"
@@ -42,6 +42,7 @@ async function main() {
       "plan-model": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
+      role: { type: "string" },
       path: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -61,6 +62,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "register") await register({ values, state, config })
     else if (command === "lane" && positionals[1] === "start") await launch({ values, state, config })
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
+    else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
@@ -153,6 +155,16 @@ async function close({ values, state }) {
   console.log(`closed: ${worktreePath}`)
 }
 
+async function recover({ values, state }) {
+  if (!values.worktree) throw new Error("lane recover requires --worktree <path>")
+  if (!values.role) throw new Error("lane recover requires --role author or --role reviewer")
+  // A trashed worktree does not exist at its registered path, so `realpath`
+  // cannot be used here. Lanes are stored by their absolute, normalized path.
+  const worktreePath = resolve(values.worktree)
+  const result = await recoverLane({ aoe: laneAoe(new AoeClient()), state, worktreePath, role: values.role })
+  console.log(`recovered: ${worktreePath}\t${result.role}\t${result.sessionId}\trestored=${result.restored}\tstarted=${result.started}\tlane=${result.lane.state}`)
+}
+
 async function validateHandoff({ values }) {
   if (!values.path) throw new Error("handoff validate requires --path <path>")
   const handoff = await readHandoff(values.path)
@@ -215,6 +227,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
+  node automations/review-loop/cli.mjs lane recover --worktree <path> --role author|reviewer
   node automations/review-loop/cli.mjs status`)
 }
 
@@ -232,6 +245,8 @@ function laneAoe(client) {
     send: (sessionId, message) => client.send(sessionId, message),
     listSessions: () => client.listSessions(),
     runtimeSessions: (options) => client.runtimeSessions(options),
+    restoreSession: (sessionId) => client.restoreSession(sessionId),
+    startSession: (sessionId) => client.startSession(sessionId),
     removeSession: (sessionId, options) => client.removeSession(sessionId, options),
   }
 }

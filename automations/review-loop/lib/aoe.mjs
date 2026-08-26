@@ -87,6 +87,11 @@ export class AoeClient {
     await waitForSessionReady(this, sessionId)
   }
 
+  /** Restores an AoE session and its worktree from AoE's retained trash. */
+  async restoreSession(sessionId) {
+    await execFileAsync(this.command, ["session", "restore", sessionId])
+  }
+
   async captureSession(sessionId) {
     const { stdout } = await execFileAsync(this.command, [
       "session",

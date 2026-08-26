@@ -1,3 +1,5 @@
+import { access, readFile, writeFile } from "node:fs/promises"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { groupForWorktree } from "./aoe.mjs"
 
 /** Starts watching an existing pair after placing both role-bound sessions in its lane group. */
@@ -122,6 +124,89 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
   await aoe.deleteGroup(groupForWorktree(worktreePath))
   state.deleteLane(worktreePath)
   return lane
+}
+
+/**
+ * Restores one stopped or trashed role session without dispatching workflow work.
+ * The operator must explicitly resume/re-deliver a task afterwards, so recovery
+ * cannot duplicate a push, pull-request operation, or handoff.
+ */
+export async function recoverLane({ aoe, state, worktreePath, role }) {
+  const lane = normalizeLane(state.lane(worktreePath))
+  if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
+  if (role !== "author" && role !== "reviewer") throw new Error("lane recover requires --role author or --role reviewer.")
+
+  const sessionId = role === "author" ? lane.authorSessionId : lane.reviewerSessionId
+  const expectedTool = role === "author" ? lane.authorTool : lane.reviewerTool
+  let sessions = await aoe.listSessions()
+  let session = sessions.find((entry) => entry.id === sessionId)
+  if (!session) throw new Error(`Registered ${role} AoE session ${sessionId} no longer exists; TARS cannot reconstruct it.`)
+  if (session.tool !== expectedTool) throw new Error(`AoE session ${sessionId} is not the registered ${role} harness for ${worktreePath}.`)
+
+  const trashed = isTrashedSession(session)
+  if (trashed) {
+    const restoreGitPointer = await prepareTrashedWorktreeGitPointer(session.path, worktreePath)
+    let restored = false
+    try {
+      await aoe.restoreSession(sessionId)
+      restored = true
+    } finally {
+      await restoreGitPointer?.({ restored })
+    }
+    sessions = await aoe.listSessions()
+    session = sessions.find((entry) => entry.id === sessionId)
+    if (!session || session.path !== worktreePath || session.tool !== expectedTool) {
+      throw new Error(`AoE restored ${sessionId}, but it is not the registered ${role} session at ${worktreePath}.`)
+    }
+  } else if (session.path !== worktreePath) {
+    throw new Error(`AoE session ${sessionId} is no longer located at the registered worktree ${worktreePath}.`)
+  }
+
+  await aoe.moveSessionToGroup(sessionId, groupForWorktree(worktreePath))
+  const runtime = (await aoe.runtimeSessions({ includeDead: true })).find((entry) => entry.session === sessionId)
+  const started = runtime?.state !== "running"
+  if (started) await aoe.startSession(sessionId)
+  return { lane, sessionId, role, restored: trashed, started }
+}
+
+function isTrashedSession(session) {
+  return session.path?.includes("/.aoe-trash/")
+}
+
+/**
+ * AoE's trash directory adds one path segment. Linked-worktree `.git` files
+ * use relative gitdirs, so temporarily add that segment only when the original
+ * target is broken and the adjusted target is known to exist.
+ */
+export async function prepareTrashedWorktreeGitPointer(trashedWorktreePath, worktreePath) {
+  const gitFile = join(trashedWorktreePath, ".git")
+  let original
+  try {
+    original = await readFile(gitFile, "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
+  }
+  const match = /^(gitdir:\s*)(.+?)(\r?\n?)$/.exec(original)
+  if (!match || isAbsolute(match[2])) return null
+  const currentTarget = resolve(dirname(gitFile), match[2])
+  const adjustedTarget = resolve(dirname(gitFile), "..", match[2])
+  if (await pathExists(currentTarget) || !(await pathExists(adjustedTarget))) return null
+
+  await writeFile(gitFile, `${match[1]}../${match[2]}${match[3]}`)
+  return async ({ restored }) => {
+    await writeFile(join(restored ? worktreePath : trashedWorktreePath, ".git"), original)
+  }
+}
+
+async function pathExists(path) {
+  try {
+    await access(path)
+    return true
+  } catch (error) {
+    if (error?.code === "ENOENT") return false
+    throw error
+  }
 }
 
 function normalizeLane(lane) {
