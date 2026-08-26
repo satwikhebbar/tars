@@ -7,11 +7,4 @@ dist/
 .DS_Store
 
 # Local agent handoff queues
-.agent-handoff/inbox/*
-.agent-handoff/in-progress/*
-.agent-handoff/done/*
-.agent-handoff/archive/*
-!.agent-handoff/inbox/.gitkeep
-!.agent-handoff/in-progress/.gitkeep
-!.agent-handoff/done/.gitkeep
-!.agent-handoff/archive/.gitkeep
+.agent-handoff/
