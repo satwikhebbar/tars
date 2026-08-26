@@ -160,6 +160,7 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   fixture.state.close()
 })
@@ -192,6 +193,21 @@ test("changes requested wakes OpenCode and approval tells OpenCode to push and o
   fixture.state.close()
 })
 
+test("planned-build changes requested re-enters OpenCode Build mode", async () => {
+  const fixture = await laneFixture()
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), phase: "building" })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review.md",
+    `id: planned-r1-review\ntype: code-review\nworkflow_id: planned\nround: 1\niteration: 1\noutcome: changes_requested`,
+  )
+
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.aoe.sent.at(-1).sessionId, "opencode-1")
+  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
+  fixture.state.close()
+})
+
 test("an explicitly reopened approved lane re-reviews PR feedback and updates its existing PR", async () => {
   const fixture = await laneFixture()
   fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })
@@ -212,6 +228,7 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   fixture.state.close()

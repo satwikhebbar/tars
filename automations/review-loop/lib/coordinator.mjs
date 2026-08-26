@@ -68,7 +68,7 @@ export class ReviewLoopCoordinator {
             results.push({ event, action: `sent:author:iteration-${nextIteration}` })
             break
           }
-          await this.aoe.send(sessionId, promptFor(lane, event))
+          await this.aoe.send(sessionId, buildPrompt(lane, promptFor(lane, event)))
         }
         this.state.markDispatched(lane.worktreePath, event.key)
         this.state.saveLane({ ...lane, state: event.outcome })
@@ -290,9 +290,12 @@ function promptFor(lane, event) {
 
 function authorPrompt(lane, event) {
   const prompt = promptFor(lane, event)
-  if (event.destination === "author" && lane.authorHarness === "opencode" && lane.planning === "required" && lane.phase === "building") {
-    return `/tars-build ${prompt}`
-  }
+  return event.destination === "author" && event.reviewKind !== "plan" ? buildPrompt(lane, prompt) : prompt
+}
+
+/** Routes planned-lane implementation and publishing work back through OpenCode's Build agent. */
+function buildPrompt(lane, prompt, { force = false } = {}) {
+  if (lane.authorHarness === "opencode" && lane.planning === "required" && (force || ["building", "post_pr_feedback"].includes(lane.phase))) return `/tars-build ${prompt}`
   return prompt
 }
 
@@ -317,5 +320,5 @@ function hasNextIteration(lane, event) {
 
 function iterationPrompt(lane, workflowId, planVerdictPath, iteration, round) {
   const prompt = `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}, and head_commit. Before publishing, run node automations/review-loop/cli.mjs handoff validate --path <handoff-path>; correct every reported error. Do not start a later iteration, push, or create a pull request yet.`
-  return lane.authorHarness === "opencode" ? `/tars-build ${prompt}` : prompt
+  return buildPrompt(lane, prompt, { force: true })
 }
