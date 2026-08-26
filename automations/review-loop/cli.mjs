@@ -9,7 +9,7 @@ import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validat
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
-import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneMaxRounds, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { StateStore } from "./lib/state.mjs"
@@ -62,6 +62,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "register") await register({ values, state, config })
     else if (command === "lane" && positionals[1] === "start") await launch({ values, state, config })
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
+    else if (command === "lane" && positionals[1] === "set-max-rounds") await setMaxRounds({ values, state })
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
@@ -165,6 +166,14 @@ async function recover({ values, state }) {
   console.log(`recovered: ${worktreePath}\t${result.role}\t${result.sessionId}\trestored=${result.restored}\tstarted=${result.started}\tlane=${result.lane.state}`)
 }
 
+async function setMaxRounds({ values, state }) {
+  if (!values.worktree) throw new Error("lane set-max-rounds requires --worktree <path>")
+  const worktreePath = await realpath(values.worktree)
+  const maxRounds = positiveInteger(values["max-rounds"], undefined, "--max-rounds")
+  const lane = setLaneMaxRounds({ state, worktreePath, maxRounds })
+  console.log(`max-rounds: ${worktreePath}\t${lane.maxRounds}`)
+}
+
 async function validateHandoff({ values }) {
   if (!values.path) throw new Error("handoff validate requires --path <path>")
   const handoff = await readHandoff(values.path)
@@ -227,6 +236,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
+  node automations/review-loop/cli.mjs lane set-max-rounds --worktree <path> --max-rounds <number>
   node automations/review-loop/cli.mjs lane recover --worktree <path> --role author|reviewer
   node automations/review-loop/cli.mjs status`)
 }

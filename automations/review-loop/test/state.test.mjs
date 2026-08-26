@@ -22,6 +22,7 @@ test("persists resolved harness snapshots and ignores unbound legacy rows", asyn
     state: "watching", maxRounds: 5, planning: "not_required", phase: "building", planModel: null,
     transitionHandoffPath: null, transitionWorkflowId: null, transitionRequestedAt: null,
     planVerdictPath: null, planVerdictId: null, iterationCount: 1, currentIteration: 1,
+    invalidResumeState: null, invalidResumePhase: null,
   })
   state.close()
 })

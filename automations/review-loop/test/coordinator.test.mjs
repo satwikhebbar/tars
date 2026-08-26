@@ -234,6 +234,29 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   fixture.state.close()
 })
 
+test("an approved lane surfaces a missing reopen flag until the author corrects it", async () => {
+  const fixture = await laneFixture()
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })
+  const frontmatter = `id: pr-feedback-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\niteration: 1\nhead_commit: def456`
+  await writeWorkflowHandoff(fixture.worktree, "inbox/pr-feedback-response.md", frontmatter)
+
+  const invalid = await fixture.coordinator.processAll()
+  assert.match(invalid[0].action, /invalid-handoff: approved lane requires reopen: true/)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "invalid_handoff")
+  assert.equal(fixture.state.lane(fixture.worktree).invalidResumeState, "approved")
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "invalid_handoff")
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  await writeWorkflowHandoff(fixture.worktree, "inbox/pr-feedback-response.md", `${frontmatter}\nreopen: true`)
+  const recovered = await fixture.coordinator.processAll()
+  assert.equal(recovered[0].action, "sent:codex")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
+  fixture.state.close()
+})
+
 test("a lane blocks instead of dispatching beyond its round limit", async () => {
   const fixture = await laneFixture({ maxRounds: 1 })
   await writeWorkflowHandoff(

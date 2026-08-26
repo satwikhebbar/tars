@@ -22,16 +22,30 @@ export class ReviewLoopCoordinator {
   async processLane(lane) {
     if (lane.state === "blocked") return []
     const { handoffs, invalidHandoffs } = await handoffsFor(lane.worktreePath)
-    if (invalidHandoffs.length) {
+    const contextualInvalidHandoffs = handoffs
+      .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff, { requiresReopen: activeLaneState(lane) === "approved" }) }))
+      .filter((invalid) => invalid.errors.length)
+    const invalid = invalidHandoffs[0] ?? contextualInvalidHandoffs[0]
+    if (invalid) {
       if (lane.state !== "invalid_handoff") {
-        const invalid = invalidHandoffs[0]
-        this.state.saveLane({ ...lane, state: "invalid_handoff" })
+        this.state.saveLane({
+          ...lane,
+          state: "invalid_handoff",
+          invalidResumeState: lane.state,
+          invalidResumePhase: lane.phase,
+        })
         return [{ event: { handoff: { metadata: { id: invalid.handoff.metadata.id ?? invalid.handoff.path } } }, action: `invalid-handoff: ${invalid.errors.join(", ")}` }]
       }
       return []
     }
     if (lane.state === "invalid_handoff") {
-      lane = { ...lane, state: "watching" }
+      lane = {
+        ...lane,
+        state: lane.invalidResumeState ?? "watching",
+        phase: lane.invalidResumePhase ?? lane.phase,
+        invalidResumeState: null,
+        invalidResumePhase: null,
+      }
       this.state.saveLane(lane)
     }
     const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
@@ -140,6 +154,10 @@ export class ReviewLoopCoordinator {
     })
     return { event: { handoff: { metadata: { id: lane.transitionWorkflowId } } }, action: "sent:author:build" }
   }
+}
+
+function activeLaneState(lane) {
+  return lane.state === "invalid_handoff" ? lane.invalidResumeState ?? "watching" : lane.state
 }
 
 /** Reads active handoffs only; archived history is never re-dispatched. */

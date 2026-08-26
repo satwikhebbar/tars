@@ -40,6 +40,13 @@ test("enforces type-specific workflow metadata", () => {
   assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "plan-review-verdict", outcome: "approved" })), ["approved plan verdict requires positive iteration_count"])
 })
 
+test("requires an explicit reopen flag when validating an approved lane response", () => {
+  const response = handoff({ ...base, type: "implementation-response", head_commit: "abc123" })
+  assert.deepEqual(validateWorkflowHandoff(response, { requiresReopen: true }), ["approved lane requires reopen: true"])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...response.metadata, reopen: true }), { requiresReopen: true }), [])
+  assert.deepEqual(validateWorkflowHandoff(response), [])
+})
+
 test("recognizes incomplete protocol handoffs as validation candidates", () => {
   assert.equal(isWorkflowHandoffCandidate(handoff({ type: "implementation-response" })), true)
   assert.equal(isWorkflowHandoffCandidate(handoff({ type: "note" })), false)

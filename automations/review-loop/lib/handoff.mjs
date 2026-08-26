@@ -50,7 +50,7 @@ export function isWorkflowHandoffCandidate(handoff) {
 }
 
 /** Returns deterministic protocol errors; an empty array means the handoff is actionable. */
-export function validateWorkflowHandoff(handoff) {
+export function validateWorkflowHandoff(handoff, { requiresReopen = false } = {}) {
   if (!handoff?.metadata) return ["missing YAML frontmatter"]
   const { metadata } = handoff
   const errors = []
@@ -60,6 +60,7 @@ export function validateWorkflowHandoff(handoff) {
   if (!Number.isInteger(metadata.round) || metadata.round < 1) errors.push("missing positive integer round")
   if (metadata.type === "plan-review" && (!Array.isArray(metadata.target) || metadata.target.length === 0)) errors.push("missing target")
   if (metadata.type === "implementation-response" && (typeof metadata.head_commit !== "string" || !metadata.head_commit.trim())) errors.push("missing head_commit")
+  if (requiresReopen && metadata.type === "implementation-response" && metadata.reopen !== true) errors.push("approved lane requires reopen: true")
   if (["plan-review-verdict", "code-review"].includes(metadata.type) && !["approved", "changes_requested", "blocked"].includes(metadata.outcome)) errors.push("missing valid outcome")
   if (metadata.type === "plan-review-verdict" && metadata.outcome === "approved" && (!Number.isInteger(metadata.iteration_count) || metadata.iteration_count < 1)) errors.push("approved plan verdict requires positive iteration_count")
   return errors

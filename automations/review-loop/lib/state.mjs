@@ -36,6 +36,8 @@ export class StateStore {
         reviewer_harness TEXT,
         author_tool TEXT,
         reviewer_tool TEXT,
+        invalid_resume_state TEXT,
+        invalid_resume_phase TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS dispatched_events (
@@ -62,6 +64,8 @@ export class StateStore {
       "reviewer_harness TEXT",
       "author_tool TEXT",
       "reviewer_tool TEXT",
+      "invalid_resume_state TEXT",
+      "invalid_resume_phase TEXT",
     ]) {
       try {
         this.database.exec(`ALTER TABLE lanes ADD COLUMN ${column}`)
@@ -84,8 +88,8 @@ export class StateStore {
     const authorTool = lane.authorTool ?? "opencode"
     const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, invalid_resume_state, invalid_resume_phase, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worktree_path) DO UPDATE SET
           author_session_id = excluded.author_session_id,
           reviewer_session_id = excluded.reviewer_session_id,
@@ -105,6 +109,8 @@ export class StateStore {
           plan_verdict_id = excluded.plan_verdict_id,
           iteration_count = excluded.iteration_count,
           current_iteration = excluded.current_iteration,
+          invalid_resume_state = excluded.invalid_resume_state,
+          invalid_resume_phase = excluded.invalid_resume_phase,
           updated_at = excluded.updated_at`)
       .run(
         lane.worktreePath,
@@ -128,6 +134,8 @@ export class StateStore {
         lane.planVerdictId ?? null,
         lane.iterationCount ?? 1,
         lane.currentIteration ?? 1,
+        lane.invalidResumeState ?? null,
+        lane.invalidResumePhase ?? null,
         new Date().toISOString(),
       )
   }
@@ -181,5 +189,7 @@ function toLane(row) {
     planVerdictId: row.plan_verdict_id,
     iterationCount: row.iteration_count,
     currentIteration: row.current_iteration,
+    invalidResumeState: row.invalid_resume_state,
+    invalidResumePhase: row.invalid_resume_phase,
   }
 }

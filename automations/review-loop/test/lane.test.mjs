@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { groupForWorktree } from "../lib/aoe.mjs"
-import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneMaxRounds, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("groups both sessions before watching an existing pair", async () => {
   const aoe = new FakeAoe()
@@ -65,6 +65,32 @@ test("normalizes legacy pair IDs when registering a lane", async () => {
   assert.equal(lane.reviewerSessionId, "codex-44")
   assert.equal(state.entries[0].authorSessionId, "open-44")
   assert.equal(state.entries[0].reviewerSessionId, "codex-44")
+})
+
+test("updates a lane review budget without changing workflow state or sessions", () => {
+  const original = {
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    state: "approved",
+    phase: "post_pr_feedback",
+    maxRounds: 5,
+  }
+  let stored = original
+  const state = {
+    lane: () => stored,
+    saveLane: (lane) => {
+      stored = lane
+    },
+  }
+
+  const updated = setLaneMaxRounds({ state, worktreePath: original.worktreePath, maxRounds: 15 })
+
+  assert.equal(updated.maxRounds, 15)
+  assert.equal(updated.state, "approved")
+  assert.equal(updated.phase, "post_pr_feedback")
+  assert.equal(updated.authorSessionId, "open-44")
+  assert.equal(updated.reviewerSessionId, "codex-44")
 })
 
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {

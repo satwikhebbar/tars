@@ -12,6 +12,7 @@ The current lane uses `.agent-handoff/` as a durable queue. Work only in the cur
 - Publish one Markdown handoff in `.agent-handoff/inbox/` after committing a plan or verified code. The coordinator reads Markdown frontmatter; use the matching template below rather than a JSON file.
 - Set `created_by: author`; preserve `workflow_id`, increment `round`, and copy any assigned `iteration`. Before publishing, run `node automations/review-loop/cli.mjs handoff validate --path <handoff-file>` and correct every reported error.
 - When changes are requested, consume the reviewer handoff, make and verify the requested change, commit, then publish the next author response.
+- For feedback on an already-approved pull request, include `reopen: true` in the implementation response. It reopens the lane and routes the response to the reviewer.
 
 ### Implementation response
 
@@ -25,6 +26,8 @@ workflow_id: <workflow-id>
 round: <round>
 # Include this field only for a plan-first lane:
 iteration: <iteration>
+# Include for feedback on an already-approved pull request:
+reopen: true
 head_commit: <immutable-commit-sha>
 cleanup: archive
 ---

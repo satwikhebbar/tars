@@ -43,6 +43,14 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, roles,
   return lane
 }
 
+/** Updates a lane's review budget without changing its sessions or workflow state. */
+export function setLaneMaxRounds({ state, worktreePath, maxRounds }) {
+  const lane = normalizeLane(state.lane(worktreePath))
+  if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
+  state.saveLane({ ...lane, maxRounds })
+  return { ...lane, maxRounds }
+}
+
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
 export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel, roles, provision }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
