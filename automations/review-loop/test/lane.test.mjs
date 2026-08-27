@@ -93,6 +93,32 @@ test("updates a lane review budget without changing workflow state or sessions",
   assert.equal(updated.reviewerSessionId, "codex-44")
 })
 
+test("explicitly resumes a lane stopped at its round limit when increasing the budget", () => {
+  const original = {
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    state: "blocked",
+    phase: "building",
+    maxRounds: 5,
+  }
+  let stored = original
+  const state = {
+    lane: () => stored,
+    saveLane: (lane) => {
+      stored = lane
+    },
+  }
+
+  const updated = setLaneMaxRounds({ state, worktreePath: original.worktreePath, maxRounds: 15, resume: true })
+
+  assert.equal(updated.maxRounds, 15)
+  assert.equal(updated.state, "implementing")
+  assert.equal(updated.phase, "building")
+  assert.equal(updated.authorSessionId, "open-44")
+  assert.equal(updated.reviewerSessionId, "codex-44")
+})
+
 test("starts one implementation session and one reviewer in its AoE worktree", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()

@@ -44,6 +44,7 @@ async function main() {
       "plan-model": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
+      resume: { type: "boolean", default: false },
       role: { type: "string" },
       path: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
@@ -173,8 +174,8 @@ async function setMaxRounds({ values, state }) {
   if (!values.worktree) throw new Error("lane set-max-rounds requires --worktree <path>")
   const worktreePath = await realpath(values.worktree)
   const maxRounds = positiveInteger(values["max-rounds"], undefined, "--max-rounds")
-  const lane = setLaneMaxRounds({ state, worktreePath, maxRounds })
-  console.log(`max-rounds: ${worktreePath}\t${lane.maxRounds}`)
+  const lane = setLaneMaxRounds({ state, worktreePath, maxRounds, resume: values.resume })
+  console.log(`max-rounds: ${worktreePath}\t${lane.maxRounds}\tstate=${lane.state}`)
 }
 
 async function validateHandoff({ values }) {
@@ -257,7 +258,7 @@ function printUsage() {
   node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
-  node automations/review-loop/cli.mjs lane set-max-rounds --worktree <path> --max-rounds <number>
+  node automations/review-loop/cli.mjs lane set-max-rounds --worktree <path> --max-rounds <number> [--resume]
   node automations/review-loop/cli.mjs lane recover --worktree <path> --role author|reviewer
   node automations/review-loop/cli.mjs lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   node automations/review-loop/cli.mjs status`)

@@ -86,7 +86,9 @@ For a plan-first lane with OpenCode as author, TARS launches its custom
 needs the author to revise and commit the durable plan and publish review
 handoffs while keeping implementation work gated on plan approval. The custom
 agent is therefore scoped to planning artifacts and handoffs, then TARS moves
-the author to OpenCode Build mode after plan approval.
+the author to OpenCode Build mode after plan approval. Its `/tars-build`
+command runs in the primary session (`subtask: false`), so subsequent turns
+remain in Build mode rather than returning to `tars-plan`.
 
 This is currently the only harness-specific planning agent. Other supported
 author harnesses use their normal author mode; TARS may add equivalent agents

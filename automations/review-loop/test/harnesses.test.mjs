@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodePlanAgent, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 
@@ -56,6 +56,20 @@ test("provisions TARS's writable-but-plan-scoped OpenCode agent", async () => {
     assert.match(agent, /Do not describe\s+this\s+session as read-only/)
     await writeFile(join(home, ".config", "opencode", "agents", "tars-plan.md"), "user-owned\n")
     await assert.rejects(() => provisionOpenCodePlanAgent(ROOT), /not TARS-owned/)
+  } finally {
+    process.env.HOME = originalHome
+  }
+})
+
+test("provisions a Build command that switches the primary OpenCode session", async () => {
+  const home = await mkdtemp(join(tmpdir(), "tars-opencode-home-"))
+  const originalHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    await provisionOpenCodeCommand(ROOT)
+    const command = await readFile(join(home, ".config", "opencode", "commands", "tars-build.md"), "utf8")
+    assert.match(command, /^agent: build$/m)
+    assert.match(command, /^subtask: false$/m)
   } finally {
     process.env.HOME = originalHome
   }

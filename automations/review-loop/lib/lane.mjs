@@ -43,12 +43,19 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, roles,
   return lane
 }
 
-/** Updates a lane's review budget without changing its sessions or workflow state. */
-export function setLaneMaxRounds({ state, worktreePath, maxRounds }) {
+/**
+ * Updates a lane's review budget without changing its sessions.  An explicit
+ * resume explicitly clears a prior stop and restores the lane to the phase
+ * that was active when it stopped. It is deliberately opt-in because blocked
+ * may also represent a reviewer-reported blocker.
+ */
+export function setLaneMaxRounds({ state, worktreePath, maxRounds, resume = false }) {
   const lane = normalizeLane(state.lane(worktreePath))
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
-  state.saveLane({ ...lane, maxRounds })
-  return { ...lane, maxRounds }
+  const stateAfterResume = lane.phase === "planning" ? "planning" : "implementing"
+  const updated = { ...lane, maxRounds, state: resume && lane.state === "blocked" ? stateAfterResume : lane.state }
+  state.saveLane(updated)
+  return updated
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
