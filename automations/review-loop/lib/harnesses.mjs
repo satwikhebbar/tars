@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, readFile, writeFile, access, cp, lstat } from "node:fs/promises"
+import { mkdir, readFile, writeFile, access, chmod, cp, lstat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
@@ -100,6 +100,19 @@ export async function provisionOpenCodeCommand(root, force = false) {
   await installOwnedFile(source, destination, force)
 }
 
+/** Installs the TARS controller command independently of a lane worktree. */
+export async function provisionTarsCli(root, force = false) {
+  const runtime = join(homedir(), ".local", "share", "tars", "review-loop")
+  const command = join(homedir(), ".local", "bin", "tars")
+  await installOwnedDirectory(join(root, "automations", "review-loop"), runtime, force)
+  await installOwnedText(
+    `#!/bin/sh\n# tars-owned: true\nexec node ${shellQuote(join(runtime, "cli.mjs"))} "$@"\n`,
+    command,
+    force,
+  )
+  await chmod(command, 0o755)
+}
+
 /** Installs TARS's writable-but-plan-scoped OpenCode primary agent. */
 export async function provisionOpenCodePlanAgent(root, force = false) {
   const source = join(root, "agents", "opencode", "tars-plan.md")
@@ -109,6 +122,7 @@ export async function provisionOpenCodePlanAgent(root, force = false) {
 
 /** Provisions every TARS requirement for supported harnesses discovered by AoE. */
 export async function provisionInstalledHarnesses({ root, installed, force = false }) {
+  await provisionTarsCli(root, force)
   const harnesses = Object.values(BUILTIN_HARNESSES).filter((harness) => installed.has(harness.tool))
   await Promise.all(harnesses.map((harness) => provisionHarnessSkills({ root, harness, force })))
   if (harnesses.some((harness) => harness.key === "opencode")) {
@@ -145,4 +159,17 @@ async function installOwnedFile(source, destination, force) {
   } catch (error) { if (error?.code !== "ENOENT") throw error }
   await mkdir(dirname(destination), { recursive: true })
   await cp(source, destination, { force: true })
+}
+
+async function installOwnedText(contents, destination, force) {
+  try {
+    const existing = await readFile(destination, "utf8")
+    if (!existing.includes("tars-owned: true") && !force) throw new Error(`${destination} exists but is not TARS-owned.`)
+  } catch (error) { if (error?.code !== "ENOENT") throw error }
+  await mkdir(dirname(destination), { recursive: true })
+  await writeFile(destination, contents, "utf8")
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`
 }

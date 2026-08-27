@@ -20,6 +20,7 @@ TARS currently supports these AoE-backed harnesses in either role:
 
 `node setup.mjs` discovers which are installed locally, lets you select default
 roles, and provisions TARS requirements for every supported installed harness.
+It also installs the TARS-owned `tars` controller command in `~/.local/bin`.
 
 ## Prerequisites
 
@@ -43,8 +44,8 @@ environment where AoE launches agent sessions:
 
 ## One-time setup
 
-Clone TARS, then install the default TARS skills and command for fresh agent
-sessions with one command:
+Clone TARS, then install the default TARS skills and portable controller command
+for fresh agent sessions with one command:
 
 ```bash
 git clone https://github.com/satwikhebbar/tars.git
@@ -72,7 +73,9 @@ supported harness to your device:
 node setup.mjs provision
 ```
 
-This refreshes only TARS-owned global files. Cursor's required rule is
+This refreshes only TARS-owned global files, including the `tars` command.
+Ensure `~/.local/bin` is on `PATH` in the environment that launches AoE and its
+agent sessions. Cursor's required rule is
 worktree-local, so TARS provisions it when a Cursor lane is created. Selective
 installers copy skills into the agent's global configuration, so use `--force`
 when updating one that is already installed. Start new AoE sessions after an
@@ -104,7 +107,7 @@ lane and prints only dispatched handoff events, so quiet output means no new
 handoff needed delivery.
 
 ```bash
-node automations/review-loop/cli.mjs watch
+tars watch
 ```
 
 In another terminal, create a lane for an issue. TARS asks the selected author
@@ -114,7 +117,7 @@ appropriate opening prompt. Defaults come from `setup.mjs`; pass `--author` and
 `--reviewer` to override them for this lane:
 
 ```bash
-node automations/review-loop/cli.mjs lane start \
+tars lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
   --author opencode --reviewer codex \
@@ -126,7 +129,7 @@ for direct implementation. A plan-first lane can use a configured planning
 model:
 
 ```bash
-node automations/review-loop/cli.mjs lane start \
+tars lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
   --planning always \
@@ -189,24 +192,24 @@ leaves delivery to the shared watcher. No second lane or pull request is made.
 
 ```bash
 # Inspect all persisted lanes.
-node automations/review-loop/cli.mjs status
+tars status
 
 # Register an already-created AoE author/reviewer pair; the shared watcher serves it.
-node automations/review-loop/cli.mjs lane register --worktree /absolute/path/to/worktree
+tars lane register --worktree /absolute/path/to/worktree
 
 # Start a one-off watcher while registering an existing pair (advanced use).
-node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree
+tars start --worktree /absolute/path/to/worktree
 
 # Retire a merged, approved lane. This also works if an invalid stale handoff
 # temporarily masks an otherwise approved lane. AoE removes its own worktree
 # and branch.
-node automations/review-loop/cli.mjs lane close --issue 44
+tars lane close --issue 44
 
 # Abort only after both registered AoE panes have been stopped and are dead.
-node automations/review-loop/cli.mjs lane close --issue 44 --force
+tars lane close --issue 44 --force
 
 # Diagnose a stuck or interrupted lane from durable handoffs and session liveness (read-only).
-node automations/review-loop/cli.mjs lane resume --issue 44
+tars lane resume --issue 44
 ```
 
 See the [review-loop reference](automations/review-loop/README.md) for all

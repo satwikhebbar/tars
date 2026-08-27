@@ -15,7 +15,7 @@ async function main() {
   if (process.argv.slice(2).includes("provision")) {
     if (process.argv.length !== 3) throw new Error("Usage: node setup.mjs provision")
     const provisioned = await provisionInstalledHarnesses({ root: ROOT, installed })
-    console.log(`Provisioned TARS requirements: ${provisioned.join(", ")}`)
+    console.log(`Provisioned TARS controller and harness requirements: ${provisioned.join(", ")}`)
     return
   }
   if (process.argv.length !== 2) throw new Error("Usage: node setup.mjs [provision]")
@@ -27,7 +27,7 @@ async function main() {
     config.defaults = { author, reviewer }
     await saveHarnessConfig(config)
     await provisionInstalledHarnesses({ root: ROOT, installed })
-    console.log(`Configured TARS defaults: author=${author}, reviewer=${reviewer}`)
+    console.log(`Configured TARS defaults: author=${author}, reviewer=${reviewer}; controller=tars`)
   } finally { rl.close() }
 }
 

@@ -252,16 +252,16 @@ async function waitForInterrupt(tick, interval) {
 
 function printUsage() {
   console.log(`Usage:
-  node automations/review-loop/cli.mjs start --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions] [--once]
-  node automations/review-loop/cli.mjs watch [--once]
-  node automations/review-loop/cli.mjs handoff validate --path <handoff-file>
-  node automations/review-loop/cli.mjs lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  node automations/review-loop/cli.mjs lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
-  node automations/review-loop/cli.mjs lane close (--worktree <path> | --issue <number>) [--force]
-  node automations/review-loop/cli.mjs lane set-max-rounds --worktree <path> --max-rounds <number> [--resume]
-  node automations/review-loop/cli.mjs lane recover --worktree <path> --role author|reviewer
-  node automations/review-loop/cli.mjs lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
-  node automations/review-loop/cli.mjs status`)
+  tars start --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions] [--once]
+  tars watch [--once]
+  tars handoff validate --path <handoff-file>
+  tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane close (--worktree <path> | --issue <number>) [--force]
+  tars lane set-max-rounds --worktree <path> --max-rounds <number> [--resume]
+  tars lane recover --worktree <path> --role author|reviewer
+  tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
+  tars status`)
 }
 
 function laneAoe(client) {

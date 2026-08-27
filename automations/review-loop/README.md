@@ -18,20 +18,20 @@ Setup lists only the harnesses currently installed through AoE. You choose defau
 Start both AoE sessions in the same worktree, then run `start` with their roles. This OpenCode-author/Codex-reviewer pairing is one example:
 
 ```bash
-node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree \
+tars start --worktree /absolute/path/to/worktree \
   --author opencode --reviewer codex
 ```
 
 Run `node setup.mjs` once to select installed default roles and provision every supported harness discovered through AoE. Run `node setup.mjs provision` after installing another supported harness later. Per-lane flags override those defaults. The command discovers one session of each selected harness whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
 
 ```bash
-node automations/review-loop/cli.mjs start \
+tars start \
   --worktree /absolute/path/to/worktree \
   --author claude --reviewer claude \
   --author-session <aoe-session-id> --reviewer-session <aoe-session-id>
 ```
 
-Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View registered lanes with `node automations/review-loop/cli.mjs status`.
+Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View registered lanes with `tars status`.
 
 ## Create and manage lanes
 
@@ -42,7 +42,7 @@ during session startup.
 For a new GitHub issue, TARS asks the selected author for a branch-name suggestion in a bounded, read-only preflight. TARS validates a single machine-readable directive, falls back to a deterministic plan-first name if necessary, and then lets AoE create the worktree and launch the role-bound sessions:
 
 ```bash
-node automations/review-loop/cli.mjs lane start \
+tars lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
   --author claude --reviewer codex --planning auto
@@ -78,26 +78,26 @@ backlog for harness-controlled launch settings.
 Run one watcher to serve every registered lane:
 
 ```bash
-node automations/review-loop/cli.mjs watch
+tars watch
 ```
 
 Register an existing worktree/session pair without creating a competing watcher:
 
 ```bash
-node automations/review-loop/cli.mjs lane register --worktree /absolute/path/to/worktree
+tars lane register --worktree /absolute/path/to/worktree
 ```
 
 After the approved branch has been merged and its issue closed, retire the lane
 through TARS rather than Git directly:
 
 ```bash
-node automations/review-loop/cli.mjs lane close --worktree /absolute/path/to/worktree
+tars lane close --worktree /absolute/path/to/worktree
 ```
 
 For lanes created with `lane start`, you can use the issue number instead:
 
 ```bash
-node automations/review-loop/cli.mjs lane close --issue 44
+tars lane close --issue 44
 ```
 
 TARS resolves only one registered worktree matching its `issue-44-<slug>`
@@ -113,7 +113,7 @@ To abort a lane before approval, first stop both author and reviewer AoE
 sessions. Once AoE reports both tmux panes as dead, use the explicit override:
 
 ```bash
-node automations/review-loop/cli.mjs lane close --issue 44 --force
+tars lane close --issue 44 --force
 ```
 
 `--force` does not terminate agents. It only permits a non-approved cleanup
@@ -126,7 +126,7 @@ If an AoE shortcut has stopped a role session or placed its worktree in AoE
 trash, restore that role using the registered absolute worktree path:
 
 ```bash
-node automations/review-loop/cli.mjs lane recover \
+tars lane recover \
   --worktree /absolute/path/to/worktree \
   --role author
 ```
@@ -148,7 +148,7 @@ files, the persisted lane row, the dispatch journal, and AoE session liveness â€
 and takes a recovery action only when the operator asks for it explicitly:
 
 ```bash
-node automations/review-loop/cli.mjs lane resume --worktree /absolute/path/to/worktree
+tars lane resume --worktree /absolute/path/to/worktree
 ```
 
 Without action flags this is read-only: it prints a verdict and the single next
@@ -158,10 +158,10 @@ refused for any other verdict:
 
 ```bash
 # Dispatch the single pending next action to its idle session.
-node automations/review-loop/cli.mjs lane resume --worktree <path> --dispatch
+tars lane resume --worktree <path> --dispatch
 
 # Re-create a registered OpenCode/Codex session that no longer exists, then re-analyze.
-node automations/review-loop/cli.mjs lane resume --worktree <path> --create-sessions
+tars lane resume --worktree <path> --create-sessions
 ```
 
 Verdicts:
