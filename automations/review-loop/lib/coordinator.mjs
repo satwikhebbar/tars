@@ -20,6 +20,16 @@ export class ReviewLoopCoordinator {
   }
 
   async processLane(lane) {
+    if (!this.state.claimLane(lane.worktreePath)) return []
+    try {
+      return await this.dispatchLane(lane)
+    } finally {
+      this.state.releaseLane(lane.worktreePath)
+    }
+  }
+
+  /** The unclaimed dispatch body; callers must hold the lane's dispatch claim. */
+  async dispatchLane(lane) {
     if (lane.state === "blocked") return []
     const { handoffs, invalidHandoffs } = await handoffsFor(lane.worktreePath)
     const contextualInvalidHandoffs = handoffs

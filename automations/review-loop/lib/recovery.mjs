@@ -194,21 +194,29 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
     throw new Error(`Refusing --dispatch: verdict is ${analysis.verdict}. ${analysis.reasons.join("; ")}`)
   }
 
-  if (analysis.verdict === "stale_delivery") {
-    // Clears the journal marker, then lets processLane re-dispatch through its
-    // normal path. A concurrently polling watcher could observe the cleared
-    // marker in this window, so recovery assumes one dispatcher per lane.
-    state.clearDispatched(worktreePath, analysis.nextEvent.key)
-  }
-
-  const coordinator = new ReviewLoopCoordinator({ aoe, state })
-  const results = await coordinator.processLane(state.lane(worktreePath))
-  if (!results.length) {
+  // The claim spans the stale-marker clear through the prompt send so no other
+  // dispatcher (for example a concurrently polling watcher) can observe the
+  // cleared marker and dispatch the same event.
+  if (!state.claimLane(worktreePath)) {
     throw new Error(
-      `Resume dispatched nothing for ${worktreePath}; re-run without --dispatch to see the current verdict.`,
+      `Refusing --dispatch: lane ${worktreePath} is claimed by another dispatcher. Stop the shared watcher or retry.`,
     )
   }
-  return { analysis, action: results[0] }
+  try {
+    if (analysis.verdict === "stale_delivery") {
+      state.clearDispatched(worktreePath, analysis.nextEvent.key)
+    }
+    const coordinator = new ReviewLoopCoordinator({ aoe, state })
+    const results = await coordinator.dispatchLane(state.lane(worktreePath))
+    if (!results.length) {
+      throw new Error(
+        `Resume dispatched nothing for ${worktreePath}; re-run without --dispatch to see the current verdict.`,
+      )
+    }
+    return { analysis, action: results[0] }
+  } finally {
+    state.releaseLane(worktreePath)
+  }
 }
 
 async function recreateMissingSessions({ aoe, state, lane }) {

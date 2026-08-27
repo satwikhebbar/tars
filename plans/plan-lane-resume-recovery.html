@@ -95,11 +95,11 @@ target session and no advancement is reported as <code>stale_delivery</code>; yo
   <li>Undispatched event over <code>max_rounds</code> (within iteration) → <code>blocked</code> (max_rounds).</li>
   <li>Multiple actionable pending events → <code>ambiguous</code> (list them). Exactly one → inspect its target session:
   dead → <code>inactive_sessions</code>; busy → <code>in_flight</code>; idle/waiting → <code>needs_dispatch</code>.</li>
+  <li><code>phase === "compacting"</code> → <code>in_flight</code> (the coordinator's plan→build transition owns it; a watcher pass advances it).</li>
   <li>No pending events. Inspect dispatched-but-unconfirmed events (no advancement, within current iteration and
   <code>max_rounds</code>):
   none → <code>no_action</code>; &gt;1 → <code>ambiguous</code>; exactly one, older than threshold + target idle → <code>stale_delivery</code>;
   busy → <code>in_flight</code>; recent → <code>in_flight</code>; dead → <code>inactive_sessions</code>.</li>
-  <li><code>phase === "compacting"</code> anywhere → <code>in_flight</code> (the coordinator's plan→build transition owns it; a watcher pass advances it).</li>
   <li>Contradiction (lane state claims <code>reviewing</code>/<code>implementing</code> but no handoff or journal evidence exists)
   → <code>ambiguous</code> with the contradiction listed.</li>
 </ol>
@@ -112,8 +112,10 @@ moved past the recorded delivery.</p>
 <ul>
   <li><code>--dispatch</code> (verdicts <code>needs_dispatch</code>, <code>stale_delivery</code>):
   for <code>stale_delivery</code>, first delete that event's <code>dispatched_events</code> row (the operator's explicit retry intent),
-  then run exactly one <code>ReviewLoopCoordinator.processLane(lane)</code> pass. <code>processLane</code> dispatches at most one
-  event per call (every branch ends in <code>break</code>), so this is exactly one prompt, through the same code path the watcher uses —
+  then run exactly one <code>dispatchLane(lane)</code> pass. The clear and the dispatch run under a shared per-lane claim
+  (SQLite <code>lane_claims</code>) so a concurrently polling watcher cannot observe the cleared marker and re-send;
+  <code>processLane</code> takes the same claim. <code>dispatchLane</code> dispatches at most one event per call
+  (every branch ends in <code>break</code>), so this is exactly one prompt, through the same code path the watcher uses —
   no duplicated prompt-building logic, and the normal state transitions apply. If the pass produces no action, report why.</li>
   <li><code>--create-sessions</code> (verdict <code>sessions_missing</code>): re-add only the missing role via
   <code>AoeClient.addSession</code>, re-register the new id in the lane row, then re-analyze. Never overwrite a session id that
