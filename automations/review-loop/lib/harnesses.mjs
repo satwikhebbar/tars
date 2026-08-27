@@ -107,6 +107,17 @@ export async function provisionOpenCodePlanAgent(root, force = false) {
   await installOwnedFile(source, destination, force)
 }
 
+/** Provisions every TARS requirement for supported harnesses discovered by AoE. */
+export async function provisionInstalledHarnesses({ root, installed, force = false }) {
+  const harnesses = Object.values(BUILTIN_HARNESSES).filter((harness) => installed.has(harness.tool))
+  await Promise.all(harnesses.map((harness) => provisionHarnessSkills({ root, harness, force })))
+  if (harnesses.some((harness) => harness.key === "opencode")) {
+    await provisionOpenCodePlanAgent(root, force)
+    await provisionOpenCodeCommand(root, force)
+  }
+  return harnesses.map((harness) => harness.key)
+}
+
 async function installOwnedDirectory(source, destination, force) {
   let exists = false
   try {

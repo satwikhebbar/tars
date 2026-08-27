@@ -19,7 +19,7 @@ TARS currently supports these AoE-backed harnesses in either role:
 - Cursor
 
 `node setup.mjs` discovers which are installed locally, lets you select default
-roles, and provisions the shared skills only for those selected harnesses.
+roles, and provisions TARS requirements for every supported installed harness.
 
 ## Prerequisites
 
@@ -64,11 +64,36 @@ node skills/install.mjs opencode close-issue --force
 ```
 
 `setup.mjs` discovers installed AoE harnesses, asks for default author and
-reviewer roles on first run, and updates the selected harnesses' TARS-managed
-skills. Selective installers copy skills into the agent's global configuration,
-so use `--force` when updating one that is already installed. Start new AoE
-sessions after an update; an already-running agent may still have its earlier
-skill instructions in context.
+reviewer roles on first run, and updates every supported installed harness's
+TARS-managed requirements. Run this non-interactive command after adding a
+supported harness to your device:
+
+```bash
+node setup.mjs provision
+```
+
+This refreshes only TARS-owned global files. Cursor's required rule is
+worktree-local, so TARS provisions it when a Cursor lane is created. Selective
+installers copy skills into the agent's global configuration, so use `--force`
+when updating one that is already installed. Start new AoE sessions after an
+update; an already-running agent may still have its earlier skill instructions
+in context.
+
+### OpenCode planning agent
+
+For a plan-first lane with OpenCode as author, TARS launches its custom
+`tars-plan` agent rather than OpenCode's built-in read-only `plan` agent. TARS
+needs the author to revise and commit the durable plan and publish review
+handoffs while keeping implementation work gated on plan approval. The custom
+agent is therefore scoped to planning artifacts and handoffs, then TARS moves
+the author to OpenCode Build mode after plan approval.
+
+This is currently the only harness-specific planning agent. Other supported
+author harnesses use their normal author mode; TARS may add equivalent agents
+as their planning behavior and permissions are validated. The supported opt-out
+is `--planning never`, which runs TARS's direct Build → review workflow. There
+is no opt-out that substitutes OpenCode's built-in read-only Plan agent while
+retaining TARS plan-review handoffs.
 
 ## Start using TARS
 

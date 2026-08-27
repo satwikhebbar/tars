@@ -22,7 +22,7 @@ node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree
   --author opencode --reviewer codex
 ```
 
-Run `node setup.mjs` once to select installed default roles. Per-lane flags override those defaults. The command discovers one session of each selected harness whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
+Run `node setup.mjs` once to select installed default roles and provision every supported harness discovered through AoE. Run `node setup.mjs provision` after installing another supported harness later. Per-lane flags override those defaults. The command discovers one session of each selected harness whose path matches the canonical worktree path, persists their role bindings under `~/.local/state/agent-review-loop/state.sqlite`, and polls the active handoff directories every two seconds. Add `--create-sessions` when the pair does not yet exist. When both roles use the same harness, or discovery is ambiguous, pass both IDs explicitly:
 
 ```bash
 node automations/review-loop/cli.mjs start \
