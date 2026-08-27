@@ -94,7 +94,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
 export async function closeLane({ aoe, state, worktreePath, force = false }) {
   const lane = normalizeLane(state.lane(worktreePath))
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
-  if (lane.state !== "approved" && !force) {
+  if (!isApprovedForRetirement(lane) && !force) {
     throw new Error(`Lane ${worktreePath} is ${lane.state}; only approved lanes can be closed.`)
   }
 
@@ -132,6 +132,15 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
   await aoe.deleteGroup(groupForWorktree(worktreePath))
   state.deleteLane(worktreePath)
   return lane
+}
+
+/**
+ * A validation error may temporarily mask an already-approved lane while the
+ * watcher preserves its prior state for recovery.  That stale handoff must not
+ * prevent an otherwise complete, merged lane from being retired.
+ */
+function isApprovedForRetirement(lane) {
+  return lane.state === "approved" || (lane.state === "invalid_handoff" && lane.invalidResumeState === "approved")
 }
 
 /**

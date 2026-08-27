@@ -195,7 +195,9 @@ node automations/review-loop/cli.mjs lane register --worktree /absolute/path/to/
 # Start a one-off watcher while registering an existing pair (advanced use).
 node automations/review-loop/cli.mjs start --worktree /absolute/path/to/worktree
 
-# Retire a merged, approved lane. AoE removes its own worktree and branch.
+# Retire a merged, approved lane. This also works if an invalid stale handoff
+# temporarily masks an otherwise approved lane. AoE removes its own worktree
+# and branch.
 node automations/review-loop/cli.mjs lane close --issue 44
 
 # Abort only after both registered AoE panes have been stopped and are dead.

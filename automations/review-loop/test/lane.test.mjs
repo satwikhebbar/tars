@@ -221,6 +221,33 @@ test("closes an approved lane through AoE before deleting its worktree", async (
   assert.equal(state.lane(worktreePath), null)
 })
 
+test("closes an approved lane temporarily masked by an invalid stale handoff", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo--issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "invalid_handoff",
+    invalidResumeState: "approved",
+    invalidResumePhase: "post_pr_feedback",
+    maxRounds: 5,
+  })
+  aoe.sessions = [
+    { id: "open-44", path: worktreePath, tool: "opencode" },
+    { id: "codex-44", path: worktreePath, tool: "codex" },
+  ]
+
+  await closeLane({ aoe, state, worktreePath })
+
+  assert.equal(state.lane(worktreePath), null)
+  assert.deepEqual(aoe.removed, [
+    ["codex-44", {}],
+    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+  ])
+})
+
 test("refuses to close a non-approved or shared lane", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
