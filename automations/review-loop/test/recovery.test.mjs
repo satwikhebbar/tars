@@ -185,7 +185,7 @@ test("a missing registered session reports sessions_missing and --create-session
     dispatch: true,
   })
   assert.equal(fixture.aoe.addedSessions[0].tool, "codex")
-  assert.equal(fixture.state.lane(fixture.worktree).codexSessionId, "codex-new-1")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewerSessionId, "codex-new-1")
   assert.equal(result.action.action, "sent:codex")
   assert.deepEqual(
     fixture.aoe.sent.map((entry) => entry.sessionId),
@@ -224,7 +224,7 @@ test("a session id reused by another worktree reports sessions_missing and is re
   const codexSession = fixture.aoe.sessions.find((session) => session.id === "codex-new-1")
   assert.equal(codexSession.tool, "codex")
   assert.equal(codexSession.path, fixture.worktree)
-  assert.equal(fixture.state.lane(fixture.worktree).codexSessionId, "codex-new-1")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewerSessionId, "codex-new-1")
   assert.deepEqual(
     fixture.aoe.sent.map((entry) => entry.sessionId),
     ["codex-new-1"],
@@ -260,7 +260,7 @@ test("a session id reused by the wrong tool reports sessions_missing and never d
     createSessions: true,
     dispatch: true,
   })
-  assert.equal(fixture.state.lane(fixture.worktree).codexSessionId, "codex-new-1")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewerSessionId, "codex-new-1")
   assert.deepEqual(
     fixture.aoe.sent.map((entry) => entry.sessionId),
     ["codex-new-1"],

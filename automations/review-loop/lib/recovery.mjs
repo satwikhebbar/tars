@@ -1,3 +1,4 @@
+import { groupForWorktree } from "./aoe.mjs"
 import {
   ACTIVE_STATES,
   classifyEvent,
@@ -21,19 +22,19 @@ const PROGRESSING_STATES = new Set(["reviewing", "implementing", "planning"])
 export async function analyzeLane({ aoe, state, worktreePath }) {
   const lane = state.lane(worktreePath)
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
-  const handoffs = await handoffsFor(worktreePath)
+  const { handoffs } = await handoffsFor(worktreePath)
   const allHandoffs = await readAllHandoffs(worktreePath)
   const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
   const dispatched = state.dispatchedEvents(worktreePath)
   const sessions = await aoe.listSessions()
   const runtime = await aoe.runtimeSessions({ includeDead: true })
-  const opencode = sessionInfo(lane.worktreePath, sessions, runtime, lane.opencodeSessionId, "opencode")
-  const codex = sessionInfo(lane.worktreePath, sessions, runtime, lane.codexSessionId, "codex")
+  const author = sessionInfo(lane.worktreePath, sessions, runtime, lane.authorSessionId, lane.authorTool)
+  const reviewer = sessionInfo(lane.worktreePath, sessions, runtime, lane.reviewerSessionId, lane.reviewerTool)
 
   const analysis = {
     worktreePath,
     lane,
-    sessions: { opencode, codex },
+    sessions: { author, reviewer },
     verdict: null,
     reasons: [],
     nextEvent: null,
@@ -47,23 +48,26 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     return analysis
   }
 
+  if (lane.state === "invalid_handoff") {
+    return finish("blocked", "lane holds an invalid handoff; remove or fix it in the queue before resuming")
+  }
   if (lane.state === "blocked") return finish("blocked", "lane state is blocked")
   if (lane.state === "approved" && !events.some((event) => event.reopensLane)) {
     return finish("no_action", "delivery complete: approved lane has no pending reopen")
   }
 
   const unusable = []
-  if (!opencode.exists) {
-    unusable.push(`opencode (${opencode.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
+  if (!author.exists) {
+    unusable.push(`author (${author.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
   }
-  if (!codex.exists) {
-    unusable.push(`codex (${codex.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
+  if (!reviewer.exists) {
+    unusable.push(`reviewer (${reviewer.status === "missing" ? "not found" : "reused by another worktree or tool"})`)
   }
   if (unusable.length) return finish("sessions_missing", `registered ${unusable.join(" and ")} session cannot be used`)
 
   const inactive = [
-    ["opencode", opencode],
-    ["codex", codex],
+    ["author", author],
+    ["reviewer", reviewer],
   ].filter(([, info]) => info.exists && (info.activity === "dead" || info.activity === "unknown"))
   if (inactive.length) {
     const detail = inactive.map(([role, info]) => `${role} session is ${info.activity}`).join(" and ")
@@ -95,7 +99,7 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
       analysis,
       lane,
       pending[0],
-      targetSession(lane, pending[0]) === lane.codexSessionId ? codex : opencode,
+      targetSession(lane, pending[0]) === lane.reviewerSessionId ? reviewer : author,
       dispatched,
     )
   }
@@ -124,12 +128,12 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
       analysis,
       lane,
       unconfirmed[0],
-      targetSession(lane, unconfirmed[0]) === lane.codexSessionId ? codex : opencode,
+      targetSession(lane, unconfirmed[0]) === lane.reviewerSessionId ? reviewer : author,
       dispatched,
     )
   }
 
-  const anyBusy = [opencode, codex].some(
+  const anyBusy = [author, reviewer].some(
     (info) => info.exists && info.activity !== "dead" && !ACTIVE_STATES.has(info.activity),
   )
   if (PROGRESSING_STATES.has(lane.state) && anyBusy) {
@@ -144,7 +148,7 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
 function pendingVerdict(analysis, lane, event, session, dispatched) {
   analysis.nextEvent = event
   analysis.nextTarget = targetSession(lane, event)
-  const role = session.id === lane.codexSessionId ? "codex" : "opencode"
+  const role = session.id === lane.reviewerSessionId ? "reviewer" : "author"
   if (!ACTIVE_STATES.has(session.activity)) {
     return { ...analysis, verdict: "in_flight", reasons: [`${role} session is busy (${session.activity})`] }
   }
@@ -227,21 +231,32 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
 async function recreateMissingSessions({ aoe, state, lane }) {
   const sessions = await aoe.listSessions()
   const suffix = lane.worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
+  const group = groupForWorktree(lane.worktreePath)
   const updated = { ...lane }
-  const opencodeValid = sessions.some(
+  const authorValid = sessions.some(
     (session) =>
-      session.id === lane.opencodeSessionId && session.path === lane.worktreePath && session.tool === "opencode",
+      session.id === lane.authorSessionId && session.path === lane.worktreePath && session.tool === lane.authorTool,
   )
-  const codexValid = sessions.some(
-    (session) => session.id === lane.codexSessionId && session.path === lane.worktreePath && session.tool === "codex",
+  const reviewerValid = sessions.some(
+    (session) =>
+      session.id === lane.reviewerSessionId && session.path === lane.worktreePath && session.tool === lane.reviewerTool,
   )
-  if (!opencodeValid) {
-    const opencode = await aoe.addSession(lane.worktreePath, "opencode", `Review loop OpenCode resume (${suffix})`)
-    updated.opencodeSessionId = opencode.id
+  if (!authorValid) {
+    const author = await aoe.addSession(lane.worktreePath, lane.authorTool, `Review loop author resume (${suffix})`, {
+      group,
+    })
+    updated.authorSessionId = author.id
   }
-  if (!codexValid) {
-    const codex = await aoe.addSession(lane.worktreePath, "codex", `Review loop Codex resume (${suffix})`)
-    updated.codexSessionId = codex.id
+  if (!reviewerValid) {
+    const reviewer = await aoe.addSession(
+      lane.worktreePath,
+      lane.reviewerTool,
+      `Review loop reviewer resume (${suffix})`,
+      {
+        group,
+      },
+    )
+    updated.reviewerSessionId = reviewer.id
   }
   state.saveLane(updated)
 }
@@ -264,8 +279,8 @@ function sessionInfo(worktreePath, sessions, runtime, sessionId, tool) {
 }
 
 function targetSession(lane, event) {
-  if (event.destination === "terminal") return lane.opencodeSessionId
-  return event.destination === "codex" ? lane.codexSessionId : lane.opencodeSessionId
+  if (event.destination === "terminal") return lane.authorSessionId
+  return event.destination === "reviewer" ? lane.reviewerSessionId : lane.authorSessionId
 }
 
 function hasAdvancement(handoffs, event) {
@@ -290,8 +305,8 @@ export function formatAnalysis(analysis) {
   const lines = [
     `Worktree: ${analysis.worktreePath}`,
     `State:    ${lane.state} (phase ${lane.phase}${iteration})`,
-    `Sessions: opencode ${sessions.opencode.id} [${sessions.opencode.activity}]`,
-    `          codex ${sessions.codex.id} [${sessions.codex.activity}]`,
+    `Sessions: author ${sessions.author.id} [${sessions.author.activity}]`,
+    `          reviewer ${sessions.reviewer.id} [${sessions.reviewer.activity}]`,
     `Verdict:  ${analysis.verdict}`,
   ]
   for (const reason of analysis.reasons) lines.push(`  reason: ${reason}`)
