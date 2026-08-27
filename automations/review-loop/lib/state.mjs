@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -51,7 +52,8 @@ export class StateStore {
       );
       CREATE TABLE IF NOT EXISTS lane_claims (
         worktree_path TEXT PRIMARY KEY,
-        claimed_at TEXT NOT NULL
+        claimed_at TEXT NOT NULL,
+        token TEXT NOT NULL DEFAULT ''
       );
     `)
     for (const column of [
@@ -79,6 +81,11 @@ export class StateStore {
       } catch (error) {
         if (!String(error.message).includes("duplicate column name")) throw error
       }
+    }
+    try {
+      this.database.exec(`ALTER TABLE lane_claims ADD COLUMN token TEXT NOT NULL DEFAULT ''`)
+    } catch (error) {
+      if (!String(error.message).includes("duplicate column name")) throw error
     }
   }
 
@@ -190,9 +197,10 @@ export class StateStore {
   }
 
   /**
-   * Atomically claims a lane for dispatch. Only one dispatcher (the shared
-   * watcher or an explicit `lane resume --dispatch`) may hold the claim, which
-   * spans stale-marker clearing through the prompt send. A claim abandoned by a
+   * Atomically claims a lane for dispatch and returns an ownership token, or
+   * `null` when another dispatcher holds the current claim. Only the holder of
+   * the returned token may release the claim, so a dispatcher whose stale lease
+   * was taken over cannot delete the replacement claim. A claim abandoned by a
    * crashed process is stolen once it is older than the timeout.
    */
   claimLane(worktreePath) {
@@ -201,25 +209,31 @@ export class StateStore {
       const existing = this.database
         .prepare("SELECT claimed_at FROM lane_claims WHERE worktree_path = ?")
         .get(worktreePath)
+      const token = randomUUID()
       const now = new Date().toISOString()
       if (existing) {
         const age = Date.now() - Date.parse(existing.claimed_at)
-        if (Number.isFinite(age) && age < CLAIM_TIMEOUT_MS) return false
-        this.database.prepare("UPDATE lane_claims SET claimed_at = ? WHERE worktree_path = ?").run(now, worktreePath)
-        return true
+        if (Number.isFinite(age) && age < CLAIM_TIMEOUT_MS) return null
+        this.database
+          .prepare("UPDATE lane_claims SET token = ?, claimed_at = ? WHERE worktree_path = ?")
+          .run(token, now, worktreePath)
+        return token
       }
-      const result = this.database
-        .prepare("INSERT OR IGNORE INTO lane_claims (worktree_path, claimed_at) VALUES (?, ?)")
-        .run(worktreePath, now)
-      return result.changes > 0
+      const inserted = this.database
+        .prepare("INSERT OR IGNORE INTO lane_claims (worktree_path, token, claimed_at) VALUES (?, ?, ?)")
+        .run(worktreePath, token, now)
+      return inserted.changes > 0 ? token : null
     } finally {
       this.database.exec("COMMIT")
     }
   }
 
-  /** Releases a dispatch claim so another dispatcher can take the lane. */
-  releaseLane(worktreePath) {
-    this.database.prepare("DELETE FROM lane_claims WHERE worktree_path = ?").run(worktreePath)
+  /** Releases a dispatch claim only if the caller owns its current generation. */
+  releaseLane(worktreePath, token) {
+    const result = this.database
+      .prepare("DELETE FROM lane_claims WHERE worktree_path = ? AND token = ?")
+      .run(worktreePath, token)
+    return result.changes > 0
   }
 }
 

@@ -312,7 +312,7 @@ test("a lane claimed by another dispatcher refuses dispatch and the watcher skip
     "inbox/response.md",
     `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
   )
-  assert.equal(fixture.state.claimLane(fixture.worktree), true)
+  assert.ok(fixture.state.claimLane(fixture.worktree))
 
   await assert.rejects(
     resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
@@ -341,8 +341,29 @@ test("a dispatch claim is released so the lane can be claimed again", async () =
     dispatch: true,
   })
   assert.equal(result.action.action, "sent:codex")
-  assert.equal(fixture.state.claimLane(fixture.worktree), true)
-  fixture.state.releaseLane(fixture.worktree)
+  const token = fixture.state.claimLane(fixture.worktree)
+  assert.ok(token)
+  fixture.state.releaseLane(fixture.worktree, token)
+  fixture.state.close()
+})
+
+test("a stale claim takeover cannot be released by the original owner", async () => {
+  const fixture = await laneFixture()
+  const ownerA = fixture.state.claimLane(fixture.worktree)
+  assert.ok(ownerA)
+
+  fixture.state.database
+    .prepare("UPDATE lane_claims SET claimed_at = ? WHERE worktree_path = ?")
+    .run(new Date(Date.now() - 61 * 60 * 1000).toISOString(), fixture.worktree)
+  const ownerB = fixture.state.claimLane(fixture.worktree)
+  assert.ok(ownerB)
+  assert.notEqual(ownerB, ownerA)
+
+  assert.equal(fixture.state.releaseLane(fixture.worktree, ownerA), false)
+  assert.equal(fixture.state.claimLane(fixture.worktree), null)
+
+  assert.equal(fixture.state.releaseLane(fixture.worktree, ownerB), true)
+  assert.ok(fixture.state.claimLane(fixture.worktree))
   fixture.state.close()
 })
 

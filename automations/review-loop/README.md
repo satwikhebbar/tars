@@ -185,10 +185,12 @@ already-dispatched events are never re-sent unless the delivery is
 A per-lane claim (in the state SQLite store) guarantees one dispatcher per lane:
 the watcher's `processLane` and `lane resume --dispatch` both take the claim
 before sending, and the stale-delivery path holds it across clearing the journal
-marker through the re-dispatch. A claim left behind by a crashed dispatcher is
-stolen after one minute. As a fallback, still stop the shared watcher before a
-manual `--dispatch`, especially for a `stale_delivery`: a concurrently running
-watcher could otherwise observe the cleared marker and dispatch the same event.
+marker through the re-dispatch. Claims are ownership-aware: a claim left behind
+by a crashed dispatcher is stolen after one minute, and a stale takeover cannot
+be undone by the previous owner's delayed release. As a fallback, still stop the
+shared watcher before a manual `--dispatch`, especially for a `stale_delivery`: a
+concurrently running watcher could otherwise observe the cleared marker and
+dispatch the same event.
 
 ## Protocol additions
 

@@ -20,11 +20,12 @@ export class ReviewLoopCoordinator {
   }
 
   async processLane(lane) {
-    if (!this.state.claimLane(lane.worktreePath)) return []
+    const token = this.state.claimLane(lane.worktreePath)
+    if (!token) return []
     try {
       return await this.dispatchLane(lane)
     } finally {
-      this.state.releaseLane(lane.worktreePath)
+      this.state.releaseLane(lane.worktreePath, token)
     }
   }
 
