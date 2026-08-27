@@ -16,6 +16,12 @@ export class AoeClient {
     return JSON.parse(stdout)
   }
 
+  /** Returns session IDs retained in AoE's trash, independent of stale paths in `list --json`. */
+  async listTrashedSessionIds() {
+    const { stdout } = await execFileAsync(this.command, ["session", "list-trash"])
+    return parseTrashedSessionIds(stdout)
+  }
+
   async runningSessions() {
     const { stdout } = await execFileAsync(this.command, ["ps", "--json"])
     return JSON.parse(stdout)
@@ -79,7 +85,13 @@ export class AoeClient {
 
   /** Removes a TARS lane group, returning its retained AoE trash records to the default group. */
   async deleteGroup(group) {
-    await execFileAsync(this.command, ["group", "delete", group, "--force"])
+    try {
+      await execFileAsync(this.command, ["group", "delete", group, "--force"])
+    } catch (error) {
+      if (String(error?.stderr ?? "").includes("Group not found:")) return false
+      throw error
+    }
+    return true
   }
 
   async startSession(sessionId) {
@@ -112,6 +124,10 @@ export class AoeClient {
       throw new Error(`Expected one newly-created ${tool} AoE session; found ${created.length}.`)
     return created[0]
   }
+}
+
+export function parseTrashedSessionIds(output) {
+  return new Set([...output.matchAll(/^\s*([a-f0-9]{16})\s+/gim)].map((match) => match[1]))
 }
 
 /**

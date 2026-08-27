@@ -276,6 +276,7 @@ function laneAoe(client) {
     deleteGroup: (group) => client.deleteGroup(group),
     send: (sessionId, message) => client.send(sessionId, message),
     listSessions: () => client.listSessions(),
+    listTrashedSessionIds: () => client.listTrashedSessionIds(),
     runtimeSessions: (options) => client.runtimeSessions(options),
     restoreSession: (sessionId) => client.restoreSession(sessionId),
     startSession: (sessionId) => client.startSession(sessionId),

@@ -99,8 +99,15 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
   }
 
   const sessions = await aoe.listSessions()
-  const sessionsInWorktree = sessions.filter((session) => session.path === worktreePath)
   const expectedIds = new Set([lane.authorSessionId, lane.reviewerSessionId])
+  const trashedIds = await aoe.listTrashedSessionIds?.() ?? new Set()
+  if ([...expectedIds].every((sessionId) => trashedIds.has(sessionId))) {
+    await aoe.deleteGroup(groupForWorktree(worktreePath))
+    state.deleteLane(worktreePath)
+    return lane
+  }
+
+  const sessionsInWorktree = sessions.filter((session) => session.path === worktreePath)
   const unexpected = sessionsInWorktree.filter((session) => !expectedIds.has(session.id))
   if (unexpected.length) {
     throw new Error(

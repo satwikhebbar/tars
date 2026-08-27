@@ -248,6 +248,26 @@ test("closes an approved lane temporarily masked by an invalid stale handoff", a
   ])
 })
 
+test("finishes an interrupted approved-lane close only when both registered sessions are trashed", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo--issue-44-add-calendar-export"
+  state.saveLane({
+    worktreePath,
+    opencodeSessionId: "open-44",
+    codexSessionId: "codex-44",
+    state: "approved",
+    maxRounds: 5,
+  })
+  aoe.trashed = new Set(["open-44", "codex-44"])
+
+  await closeLane({ aoe, state, worktreePath })
+
+  assert.equal(state.lane(worktreePath), null)
+  assert.deepEqual(aoe.removed, [])
+  assert.deepEqual(aoe.deletedGroups, [groupForWorktree(worktreePath)])
+})
+
 test("refuses to close a non-approved or shared lane", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
@@ -433,6 +453,7 @@ class FakeAoe {
     this.deletedGroups = []
     this.restored = []
     this.started = []
+    this.trashed = new Set()
   }
 
   async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group } = {}) {
@@ -464,6 +485,10 @@ class FakeAoe {
 
   async listSessions() {
     return this.sessions
+  }
+
+  async listTrashedSessionIds() {
+    return this.trashed
   }
 
   async runtimeSessions() {

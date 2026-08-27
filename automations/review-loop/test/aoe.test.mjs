@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
+import { createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, parseTrashedSessionIds, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
 
@@ -62,6 +62,11 @@ test("does not reuse a trashed worktree session", () => {
   assert.equal(findActiveWorktreeSession([
     { id: "trashed", tool: "codex", path: "/repo-worktrees/.aoe-trash/trashed", worktree: { branch: "issue/3", main_repo_path: "/repo/" } },
   ], "/repo", "issue/3", "codex"), undefined)
+})
+
+test("parses only AoE trash session IDs", () => {
+  const ids = parseTrashedSessionIds("Trashed sessions:\n  e874feb8d3c44b59  Issue 1 author\n  f8acc4ad5e1f4902  Issue 1 reviewer\n")
+  assert.deepEqual([...ids], ["e874feb8d3c44b59", "f8acc4ad5e1f4902"])
 })
 
 function sessions() {
