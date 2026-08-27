@@ -43,17 +43,18 @@ test("lane-local provisioning does not touch global skills for non-Cursor harnes
   await assert.doesNotReject(() => provisionWorktreeHarnessRequirements({ root: ROOT, harness: { key: "codex", tool: "codex" }, worktreePath: "/does-not-need-to-exist" }))
 })
 
-test("provisions TARS's restricted override for OpenCode's Plan agent", async () => {
+test("provisions TARS's writable-but-plan-scoped OpenCode agent", async () => {
   const home = await mkdtemp(join(tmpdir(), "tars-opencode-home-"))
   const originalHome = process.env.HOME
   process.env.HOME = home
   try {
     await provisionOpenCodePlanAgent(ROOT)
-    const agent = await readFile(join(home, ".config", "opencode", "agents", "plan.md"), "utf8")
+    const agent = await readFile(join(home, ".config", "opencode", "agents", "tars-plan.md"), "utf8")
     assert.match(agent, /tars-owned: true/)
     assert.match(agent, /"plans\/\*\*": allow/)
     assert.match(agent, /"\.agent-handoff\/\*\*": allow/)
-    await writeFile(join(home, ".config", "opencode", "agents", "plan.md"), "user-owned\n")
+    assert.match(agent, /Do not describe\s+this\s+session as read-only/)
+    await writeFile(join(home, ".config", "opencode", "agents", "tars-plan.md"), "user-owned\n")
     await assert.rejects(() => provisionOpenCodePlanAgent(ROOT), /not TARS-owned/)
   } finally {
     process.env.HOME = originalHome

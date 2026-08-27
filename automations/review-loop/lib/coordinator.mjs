@@ -301,7 +301,7 @@ function promptFor(lane, event) {
     if (event.outcome === "approved") {
       return ""
     }
-    return `Review-loop: read ${path}, revise the plan to address the requested changes, validate the revised plan, then publish one plan-review handoff with workflow_id ${event.handoff.metadata.workflow_id} and round ${event.round + 1}. Do not begin implementation until the plan review is approved.`
+    return `Review-loop: read ${path}, revise the plan to address the requested changes, validate the revised plan, then publish one plan-review handoff with workflow_id ${event.handoff.metadata.workflow_id} and round ${event.round + 1}. For an OpenCode TARS planning author, TARS explicitly permits writes to plans/ and .agent-handoff/ in this session: make those revisions now; do not ask the user to approve or exit planning. Do not begin implementation until the plan review is approved.`
   }
   return `Review-loop: read ${path}, apply the requested review changes for iteration ${event.iteration}, validate them, commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. Do not request a manual handoff.`
 }

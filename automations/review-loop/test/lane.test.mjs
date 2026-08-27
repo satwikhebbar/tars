@@ -141,7 +141,7 @@ test("starts a planning lane with OpenCode's configured Plan agent", async () =>
     planModel: "deepseek/v4-pro",
     openingPrompt: "plan",
   })
-  assert.deepEqual(aoe.extraArgs, ["--agent", "plan", "--model", "deepseek/v4-pro"])
+  assert.deepEqual(aoe.extraArgs, ["--agent", "tars-plan", "--model", "deepseek/v4-pro"])
   assert.equal(state.entries[0].phase, "planning")
 })
 
