@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import { ReviewLoopCoordinator } from "../lib/coordinator.mjs"
 import { analyzeLane, formatAnalysis, resumeLane } from "../lib/recovery.mjs"
 import { StateStore } from "../lib/state.mjs"
 
@@ -301,6 +302,47 @@ test("a compacting lane is in flight while the plan-to-build transition runs", a
   const fixture = await laneFixture({ state: "implementing", phase: "compacting" })
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "in_flight")
+  fixture.state.close()
+})
+
+test("a lane claimed by another dispatcher refuses dispatch and the watcher skips it", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  assert.equal(fixture.state.claimLane(fixture.worktree), true)
+
+  await assert.rejects(
+    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    /claimed by another dispatcher/,
+  )
+  assert.equal(fixture.aoe.sent.length, 0)
+
+  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state })
+  const results = await coordinator.processLane(fixture.state.lane(fixture.worktree))
+  assert.equal(results.length, 0)
+  assert.equal(fixture.aoe.sent.length, 0)
+  fixture.state.close()
+})
+
+test("a dispatch claim is released so the lane can be claimed again", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  const result = await resumeLane({
+    aoe: fixture.aoe,
+    state: fixture.state,
+    worktreePath: fixture.worktree,
+    dispatch: true,
+  })
+  assert.equal(result.action.action, "sent:codex")
+  assert.equal(fixture.state.claimLane(fixture.worktree), true)
+  fixture.state.releaseLane(fixture.worktree)
   fixture.state.close()
 })
 

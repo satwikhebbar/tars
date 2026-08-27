@@ -2,6 +2,8 @@ import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
+const CLAIM_TIMEOUT_MS = 60_000
+
 /** Persistent lane registry and idempotency journal. */
 export class StateStore {
   constructor(path) {
@@ -14,6 +16,7 @@ export class StateStore {
     this.database = new DatabaseSync(this.path)
     this.database.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS lanes (
         worktree_path TEXT PRIMARY KEY,
         opencode_session_id TEXT NOT NULL,
@@ -45,6 +48,10 @@ export class StateStore {
         event_key TEXT NOT NULL,
         created_at TEXT NOT NULL,
         PRIMARY KEY (worktree_path, event_key)
+      );
+      CREATE TABLE IF NOT EXISTS lane_claims (
+        worktree_path TEXT PRIMARY KEY,
+        claimed_at TEXT NOT NULL
       );
     `)
     for (const column of [
@@ -180,6 +187,39 @@ export class StateStore {
     this.database
       .prepare("DELETE FROM dispatched_events WHERE worktree_path = ? AND event_key = ?")
       .run(worktreePath, eventKey)
+  }
+
+  /**
+   * Atomically claims a lane for dispatch. Only one dispatcher (the shared
+   * watcher or an explicit `lane resume --dispatch`) may hold the claim, which
+   * spans stale-marker clearing through the prompt send. A claim abandoned by a
+   * crashed process is stolen once it is older than the timeout.
+   */
+  claimLane(worktreePath) {
+    this.database.exec("BEGIN IMMEDIATE")
+    try {
+      const existing = this.database
+        .prepare("SELECT claimed_at FROM lane_claims WHERE worktree_path = ?")
+        .get(worktreePath)
+      const now = new Date().toISOString()
+      if (existing) {
+        const age = Date.now() - Date.parse(existing.claimed_at)
+        if (Number.isFinite(age) && age < CLAIM_TIMEOUT_MS) return false
+        this.database.prepare("UPDATE lane_claims SET claimed_at = ? WHERE worktree_path = ?").run(now, worktreePath)
+        return true
+      }
+      const result = this.database
+        .prepare("INSERT OR IGNORE INTO lane_claims (worktree_path, claimed_at) VALUES (?, ?)")
+        .run(worktreePath, now)
+      return result.changes > 0
+    } finally {
+      this.database.exec("COMMIT")
+    }
+  }
+
+  /** Releases a dispatch claim so another dispatcher can take the lane. */
+  releaseLane(worktreePath) {
+    this.database.prepare("DELETE FROM lane_claims WHERE worktree_path = ?").run(worktreePath)
   }
 }
 

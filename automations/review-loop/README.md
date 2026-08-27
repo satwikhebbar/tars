@@ -177,16 +177,18 @@ Verdicts:
 | `ambiguous` | Multiple pending events, multiple unconfirmed deliveries, or state contradicts the handoff evidence. All candidates are listed; nothing is guessed. | none |
 | `blocked` | Lane state is blocked, or an event exceeds `max_rounds`. | none |
 
-Dispatch goes through the same `processLane` path as the watcher, so exactly
+Dispatch goes through the same `dispatchLane` path as the watcher, so exactly
 one prompt is sent per `--dispatch`, the normal state transitions apply, and
 already-dispatched events are never re-sent unless the delivery is
 `stale_delivery` and the operator chose to retry it.
 
-Recovery assumes one dispatcher per lane. Run `lane resume --dispatch` —
-especially for a `stale_delivery`, which re-journals the event before
-re-dispatching — while the shared watcher is not polling that lane. A
-concurrently running watcher could observe the cleared marker and dispatch the
-same event.
+A per-lane claim (in the state SQLite store) guarantees one dispatcher per lane:
+the watcher's `processLane` and `lane resume --dispatch` both take the claim
+before sending, and the stale-delivery path holds it across clearing the journal
+marker through the re-dispatch. A claim left behind by a crashed dispatcher is
+stolen after one minute. As a fallback, still stop the shared watcher before a
+manual `--dispatch`, especially for a `stale_delivery`: a concurrently running
+watcher could otherwise observe the cleared marker and dispatch the same event.
 
 ## Protocol additions
 
