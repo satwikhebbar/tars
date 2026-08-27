@@ -196,8 +196,10 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
 
   // The claim spans the stale-marker clear through the prompt send so no other
   // dispatcher (for example a concurrently polling watcher) can observe the
-  // cleared marker and dispatch the same event.
-  if (!state.claimLane(worktreePath)) {
+  // cleared marker and dispatch the same event. The token makes release
+  // ownership-aware: a takeover cannot be undone by the previous owner.
+  const token = state.claimLane(worktreePath)
+  if (!token) {
     throw new Error(
       `Refusing --dispatch: lane ${worktreePath} is claimed by another dispatcher. Stop the shared watcher or retry.`,
     )
@@ -215,7 +217,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
     }
     return { analysis, action: results[0] }
   } finally {
-    state.releaseLane(worktreePath)
+    state.releaseLane(worktreePath, token)
   }
 }
 
