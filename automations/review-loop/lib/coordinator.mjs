@@ -15,7 +15,13 @@ const CLAIM_RENEW_MS = 15_000
  */
 export function startClaimRenewal(renew, intervalMs = CLAIM_RENEW_MS) {
   const timer = setInterval(() => {
-    if (!renew()) clearInterval(timer)
+    let renewed = false
+    try {
+      renewed = renew()
+    } catch {
+      renewed = false
+    }
+    if (!renewed) clearInterval(timer)
   }, intervalMs)
   return { stop: () => clearInterval(timer) }
 }
