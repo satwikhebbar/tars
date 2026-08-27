@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { ReviewLoopCoordinator } from "../lib/coordinator.mjs"
+import { ReviewLoopCoordinator, startClaimRenewal } from "../lib/coordinator.mjs"
 import { analyzeLane, formatAnalysis, resumeLane } from "../lib/recovery.mjs"
 import { StateStore } from "../lib/state.mjs"
 
@@ -367,6 +367,60 @@ test("a stale claim takeover cannot be released by the original owner", async ()
   fixture.state.close()
 })
 
+test("a second dispatcher cannot send while the first is still mid-send", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
+  )
+  let releaseSend
+  const sendGate = new Promise((resolve) => {
+    releaseSend = resolve
+  })
+  fixture.aoe.send = async (sessionId, message) => {
+    fixture.aoe.sent.push({ sessionId, message })
+    await sendGate
+  }
+  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state })
+  const aDispatch = coordinator.processLane(fixture.state.lane(fixture.worktree))
+  await waitUntil(() => fixture.aoe.sent.length === 1)
+
+  const bResult = await coordinator.processLane(fixture.state.lane(fixture.worktree))
+  assert.equal(bResult.length, 0)
+  await assert.rejects(
+    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    /claimed by another dispatcher/,
+  )
+  assert.equal(fixture.aoe.sent.length, 1)
+
+  releaseSend()
+  const aResults = await aDispatch
+  assert.equal(aResults.length, 1)
+  assert.equal(fixture.aoe.sent.length, 1)
+  assert.ok(fixture.state.claimLane(fixture.worktree))
+  fixture.state.close()
+})
+
+test("renewal keeps an active dispatch claim unstealable past the expiry age", async () => {
+  const fixture = await laneFixture()
+  const ownerA = fixture.state.claimLane(fixture.worktree)
+  assert.ok(ownerA)
+  const renewal = startClaimRenewal(() => fixture.state.renewLaneClaim(fixture.worktree, ownerA), 5)
+  try {
+    fixture.state.database
+      .prepare("UPDATE lane_claims SET claimed_at = ? WHERE worktree_path = ?")
+      .run(new Date(Date.now() - 61 * 60 * 1000).toISOString(), fixture.worktree)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(fixture.state.claimLane(fixture.worktree), null)
+  } finally {
+    renewal.stop()
+    fixture.state.releaseLane(fixture.worktree, ownerA)
+  }
+  assert.ok(fixture.state.claimLane(fixture.worktree))
+  fixture.state.close()
+})
+
 test("lane state with no matching handoff evidence is reported as ambiguous", async () => {
   const fixture = await laneFixture({ state: "reviewing", phase: "post_pr_feedback" })
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
@@ -417,6 +471,14 @@ function ageDispatch(fixture, eventKey) {
   fixture.state.database
     .prepare("UPDATE dispatched_events SET created_at = ? WHERE worktree_path = ? AND event_key = ?")
     .run(new Date(Date.now() - 11 * 60 * 1000).toISOString(), fixture.worktree, eventKey)
+}
+
+async function waitUntil(condition, timeoutMs = 1000) {
+  const startedAt = Date.now()
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for condition")
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
 }
 
 async function writeWorkflowHandoff(worktree, relativePath, frontmatter) {

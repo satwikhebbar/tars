@@ -6,6 +6,7 @@ import {
   matchesCurrentIteration,
   ReviewLoopCoordinator,
   readHandoffs,
+  startClaimRenewal,
 } from "./coordinator.mjs"
 
 const STALE_AFTER_MS = 10 * 60 * 1000
@@ -204,6 +205,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
       `Refusing --dispatch: lane ${worktreePath} is claimed by another dispatcher. Stop the shared watcher or retry.`,
     )
   }
+  const renewal = startClaimRenewal(() => state.renewLaneClaim(worktreePath, token))
   try {
     if (analysis.verdict === "stale_delivery") {
       state.clearDispatched(worktreePath, analysis.nextEvent.key)
@@ -217,6 +219,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
     }
     return { analysis, action: results[0] }
   } finally {
+    renewal.stop()
     state.releaseLane(worktreePath, token)
   }
 }

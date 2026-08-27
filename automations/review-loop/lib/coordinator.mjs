@@ -5,6 +5,20 @@ import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWor
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 export const ACTIVE_STATES = new Set(["idle", "waiting"])
 const COMPACTION_SETTLE_MS = 2_000
+const CLAIM_RENEW_MS = 15_000
+
+/**
+ * Refreshes a held lane claim on an interval until stopped, so a dispatch that
+ * spends longer than the takeover timeout in an awaited send stays unstealable.
+ * Stopping renewal (or the timer failing to renew) lets the lease age out for a
+ * genuinely abandoned owner.
+ */
+export function startClaimRenewal(renew, intervalMs = CLAIM_RENEW_MS) {
+  const timer = setInterval(() => {
+    if (!renew()) clearInterval(timer)
+  }, intervalMs)
+  return { stop: () => clearInterval(timer) }
+}
 
 /** Coordinates one persisted author/reviewer pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
@@ -22,9 +36,11 @@ export class ReviewLoopCoordinator {
   async processLane(lane) {
     const token = this.state.claimLane(lane.worktreePath)
     if (!token) return []
+    const renewal = startClaimRenewal(() => this.state.renewLaneClaim(lane.worktreePath, token))
     try {
       return await this.dispatchLane(lane)
     } finally {
+      renewal.stop()
       this.state.releaseLane(lane.worktreePath, token)
     }
   }

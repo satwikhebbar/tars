@@ -114,8 +114,9 @@ moved past the recorded delivery.</p>
   for <code>stale_delivery</code>, first delete that event's <code>dispatched_events</code> row (the operator's explicit retry intent),
   then run exactly one <code>dispatchLane(lane)</code> pass. The clear and the dispatch run under a shared per-lane claim
   (SQLite <code>lane_claims</code>) so a concurrently polling watcher cannot observe the cleared marker and re-send;
-  <code>processLane</code> takes the same claim. Claims are ownership-aware: each <code>claimLane</code> returns a token and
-  <code>releaseLane</code> only deletes the row for that token, so a stale-lease takeover cannot be undone by the previous owner.
+  <code>processLane</code> takes the same claim. Claims are ownership-aware leases: each <code>claimLane</code> returns a token,
+  <code>releaseLane</code> only deletes the row for that token, and the active dispatcher renews the claim on an interval so a
+  slow send can never be taken over mid-dispatch; a genuinely abandoned lease is stolen after the timeout.
   <code>dispatchLane</code> dispatches at most one event per call
   (every branch ends in <code>break</code>), so this is exactly one prompt, through the same code path the watcher uses —
   no duplicated prompt-building logic, and the normal state transitions apply. If the pass produces no action, report why.</li>

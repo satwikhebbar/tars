@@ -199,9 +199,10 @@ export class StateStore {
   /**
    * Atomically claims a lane for dispatch and returns an ownership token, or
    * `null` when another dispatcher holds the current claim. Only the holder of
-   * the returned token may release the claim, so a dispatcher whose stale lease
-   * was taken over cannot delete the replacement claim. A claim abandoned by a
-   * crashed process is stolen once it is older than the timeout.
+   * the returned token may renew or release the claim, so a dispatcher whose
+   * stale lease was taken over cannot delete the replacement claim. A claim
+   * abandoned by a crashed process is stolen once it is older than the timeout;
+   * an active dispatcher keeps its lease fresh via `renewLaneClaim`.
    */
   claimLane(worktreePath) {
     this.database.exec("BEGIN IMMEDIATE")
@@ -226,6 +227,18 @@ export class StateStore {
     } finally {
       this.database.exec("COMMIT")
     }
+  }
+
+  /**
+   * Refreshes a claim's lease, but only for the owner of its current
+   * generation. An active dispatcher calls this on an interval so its claim
+   * never ages into the takeover timeout while a send is in flight.
+   */
+  renewLaneClaim(worktreePath, token) {
+    const result = this.database
+      .prepare("UPDATE lane_claims SET claimed_at = ? WHERE worktree_path = ? AND token = ?")
+      .run(new Date().toISOString(), worktreePath, token)
+    return result.changes > 0
   }
 
   /** Releases a dispatch claim only if the caller owns its current generation. */
