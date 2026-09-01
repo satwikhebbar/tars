@@ -223,6 +223,40 @@ test("a code-review changes_requested consumes the budget and exhaustion blocks 
   fixture.state.close()
 })
 
+test("post-approval responses and approvals advance beyond the old round cap", async () => {
+  const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex", maxRounds: 1 })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/plan-verdict.md",
+    `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 1\nreview_budget: 2`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 2)
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/response.md",
+    `id: 45-response-1\ntype: implementation-response\nworkflow_id: 45\nround: 2\niteration: 1\nhead_commit: abc123`,
+  )
+  const response = await fixture.coordinator.processAll()
+  assert.equal(response[0].action, "sent:codex")
+  assert.equal(fixture.aoe.sent.at(-1).sessionId, "codex-1")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 0)
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review.md",
+    `id: 45-review-1\ntype: code-review\nworkflow_id: 45\nround: 3\niteration: 1\noutcome: approved\nresponds_to: 45-response-1`,
+  )
+  const review = await fixture.coordinator.processAll()
+  assert.equal(review[0].action, "approved")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 0)
+  fixture.state.close()
+})
+
 test("changes requested wakes OpenCode and approval tells OpenCode to push and open a PR", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
