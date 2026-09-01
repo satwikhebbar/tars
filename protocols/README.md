@@ -12,9 +12,14 @@ TARS treats `.agent-handoff/` as the durable event log:
    worktree with `id`, `workflow_id`, and integer `round`. Codex returns
    `plan-review-verdict` with the same correlation fields and `responds_to`.
    `changes_requested` wakes OpenCode to revise the plan; `approved` wakes it
-   to implement. An approved verdict carries `iteration_count` and a numbered
-   schedule of independently reviewable implementation iterations. A plan
-   approval is not a terminal lane state.
+   to implement. An approved verdict carries `iteration_count`, a numbered
+   schedule of independently reviewable implementation iterations, and the
+   implementation's review budget in one of two forms: `review_budget` (an
+   explicit total of reviewer `changes_requested` cycles allowed) or
+   `review_budget_per_iteration` (an allowance per iteration; the total is
+   allowance × `iteration_count`). A plan approval is not a terminal lane
+   state. The handoff `round` is ordering/correlation metadata: once a plan is
+   approved it never caps implementation work.
 2. TARS starts one scheduled iteration at a time. OpenCode commits and writes
    `implementation-response` with `id`,
    `workflow_id` (a stable string or integer issue ID), integer `round`, and

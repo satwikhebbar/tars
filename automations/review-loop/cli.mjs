@@ -9,7 +9,7 @@ import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validat
 import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
-import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneMaxRounds, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
@@ -33,6 +33,7 @@ async function main() {
       state: { type: "string" },
       interval: { type: "string" },
       "max-rounds": { type: "string" },
+      "review-budget": { type: "string" },
       "create-sessions": { type: "boolean", default: false },
       dispatch: { type: "boolean", default: false },
       repo: { type: "string" },
@@ -172,10 +173,14 @@ async function recover({ values, state }) {
 
 async function setMaxRounds({ values, state }) {
   if (!values.worktree) throw new Error("lane set-max-rounds requires --worktree <path>")
+  if (!values["max-rounds"] && !values["review-budget"]) {
+    throw new Error("lane set-max-rounds requires --max-rounds <number> or --review-budget <number>")
+  }
   const worktreePath = await realpath(values.worktree)
   const maxRounds = positiveInteger(values["max-rounds"], undefined, "--max-rounds")
-  const lane = setLaneMaxRounds({ state, worktreePath, maxRounds, resume: values.resume })
-  console.log(`max-rounds: ${worktreePath}\t${lane.maxRounds}\tstate=${lane.state}`)
+  const reviewBudget = positiveInteger(values["review-budget"], undefined, "--review-budget")
+  const lane = setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, resume: values.resume })
+  console.log(`limits: ${worktreePath}\tmax-rounds=${lane.maxRounds}\treview-budget=${lane.reviewBudget ?? "unset"}\tstate=${lane.state}`)
 }
 
 async function validateHandoff({ values }) {
@@ -258,7 +263,7 @@ function printUsage() {
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
-  tars lane set-max-rounds --worktree <path> --max-rounds <number> [--resume]
+  tars lane set-max-rounds --worktree <path> --max-rounds <number> [--review-budget <number>] [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   tars status`)

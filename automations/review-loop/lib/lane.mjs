@@ -44,16 +44,25 @@ export async function registerLane({ aoe, state, worktreePath, maxRounds, roles,
 }
 
 /**
- * Updates a lane's review budget without changing its sessions.  An explicit
- * resume explicitly clears a prior stop and restores the lane to the phase
- * that was active when it stopped. It is deliberately opt-in because blocked
- * may also represent a reviewer-reported blocker.
+ * Updates a lane's dispatch limits (max_rounds and/or review budget) without
+ * changing its sessions. An explicit resume explicitly clears a prior stop and
+ * restores the lane to the phase that was active when it stopped. It is
+ * deliberately opt-in because blocked may also represent a reviewer-reported
+ * blocker. Raising a review budget never resets the consumed counter.
  */
-export function setLaneMaxRounds({ state, worktreePath, maxRounds, resume = false }) {
+export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, resume = false }) {
   const lane = normalizeLane(state.lane(worktreePath))
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
+  if (maxRounds === undefined && reviewBudget === undefined) {
+    throw new Error("setLaneLimits requires --max-rounds or --review-budget")
+  }
   const stateAfterResume = lane.phase === "planning" ? "planning" : "implementing"
-  const updated = { ...lane, maxRounds, state: resume && lane.state === "blocked" ? stateAfterResume : lane.state }
+  const updated = {
+    ...lane,
+    ...(maxRounds !== undefined ? { maxRounds } : {}),
+    ...(reviewBudget !== undefined ? { reviewBudget } : {}),
+    state: resume && lane.state === "blocked" ? stateAfterResume : lane.state,
+  }
   state.saveLane(updated)
   return updated
 }

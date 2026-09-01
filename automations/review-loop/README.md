@@ -175,7 +175,7 @@ Verdicts:
 | `sessions_missing` | A registered session is absent from AoE, or its id no longer matches the lane's worktree and role. | `--create-sessions` |
 | `inactive_sessions` | A session is dead or has no runtime record. | none (stop/remove via AoE, then `--create-sessions`) |
 | `ambiguous` | Multiple pending events, multiple unconfirmed deliveries, or state contradicts the handoff evidence. All candidates are listed; nothing is guessed. | none |
-| `blocked` | Lane state is blocked, or an event exceeds `max_rounds`. | none |
+| `blocked` | Lane state is blocked, or an event exceeds `max_rounds` or the review budget. | none |
 
 Dispatch goes through the same `dispatchLane` path as the watcher, so exactly
 one prompt is sent per `--dispatch`, the normal state transitions apply, and
@@ -219,7 +219,10 @@ OpenCode to revise and republish the plan at the next round. Each transition is
 persisted per lane, so concurrent lanes progress independently.
 
 An approved plan verdict also contains an ordered `Implementation Iterations`
-schedule and an `iteration_count` frontmatter value. TARS starts only iteration
+schedule, an `iteration_count` frontmatter value, and the implementation's
+review budget in one of two forms: `review_budget` (an explicit total) or
+`review_budget_per_iteration` (an allowance per iteration; the total is
+allowance × `iteration_count`). TARS starts only iteration
 1. Each iteration must commit, publish an `implementation-response` with its
 `iteration`, and receive Codex approval before TARS starts the next one. A
 requested change stays in the current iteration. Only approval of the final
@@ -248,7 +251,36 @@ iteration: 1
 outcome: changes_requested # approved | changes_requested | blocked
 ```
 
-An implementation response wakes only that lane's Codex session. `changes_requested` wakes only its OpenCode session. On `approved`, the coordinator wakes OpenCode once to record the completed handoff, push the approved branch, and create a pull request; it then marks the lane approved. `blocked` or a round above the cap stops the lane. Events are journaled in SQLite after successful delivery, making scans idempotent across restarts.
+An implementation response wakes only that lane's Codex session. `changes_requested` wakes only its OpenCode session. On `approved`, the coordinator wakes OpenCode once to record the completed handoff, push the approved branch, and create a pull request; it then marks the lane approved. A `blocked` verdict stops the lane, as does a round above the plan-review cap or an exhausted review budget. Events are journaled in SQLite after successful delivery, making scans idempotent across restarts.
+
+## Review budgets and the plan-review retry cap
+
+TARS enforces two independent limits, persisted separately per lane:
+
+- `max_rounds` (default 5) is the **plan-review retry cap**. It bounds only the
+  pre-approval planning phase of plan-first lanes and is the whole-lifecycle cap
+  for direct-build lanes (which have no reviewer-selected budget).
+- `review_budget` is the **implementation-phase review budget**, chosen by the
+  reviewer at plan approval and persisted separately from `max_rounds`.
+
+Once a plan is approved, `round` is ordering/correlation metadata only and never
+caps implementation work. Each implementation-phase `code-review` with
+`outcome: changes_requested` consumes exactly one unit of the budget at the
+moment TARS dispatches it to the author; planned iterations, approvals, and
+implementation responses never consume it, and a `blocked` verdict never blocks
+the lane. When the budget is exhausted, a new `changes_requested` blocks the
+lane with reason `review_budget` (surfaced by `lane resume`). Direct-build lanes
+and the pre-approval planning phase stay bounded by `max_rounds`.
+
+To recover an exhausted budget, raise it and resume the lane; the consumed
+counter is never reset:
+
+```bash
+tars lane set-max-rounds --worktree /path/to/worktree --review-budget 10 --resume
+```
+
+The same command still adjusts `max_rounds` and requires at least one of
+`--max-rounds` / `--review-budget`.
 
 ## Re-reviewing feedback on an existing PR
 
