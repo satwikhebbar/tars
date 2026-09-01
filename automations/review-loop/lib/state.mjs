@@ -34,6 +34,8 @@ export class StateStore {
         plan_verdict_id TEXT,
         iteration_count INTEGER NOT NULL DEFAULT 1,
         current_iteration INTEGER NOT NULL DEFAULT 1,
+        review_budget INTEGER,
+        review_budget_consumed INTEGER NOT NULL DEFAULT 0,
         author_session_id TEXT,
         reviewer_session_id TEXT,
         author_harness TEXT,
@@ -67,6 +69,8 @@ export class StateStore {
       "plan_verdict_id TEXT",
       "iteration_count INTEGER NOT NULL DEFAULT 1",
       "current_iteration INTEGER NOT NULL DEFAULT 1",
+      "review_budget INTEGER",
+      "review_budget_consumed INTEGER NOT NULL DEFAULT 0",
       "author_session_id TEXT",
       "reviewer_session_id TEXT",
       "author_harness TEXT",
@@ -102,8 +106,8 @@ export class StateStore {
     const authorTool = lane.authorTool ?? "opencode"
     const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, invalid_resume_state, invalid_resume_phase, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worktree_path) DO UPDATE SET
           author_session_id = excluded.author_session_id,
           reviewer_session_id = excluded.reviewer_session_id,
@@ -123,6 +127,8 @@ export class StateStore {
           plan_verdict_id = excluded.plan_verdict_id,
           iteration_count = excluded.iteration_count,
           current_iteration = excluded.current_iteration,
+          review_budget = excluded.review_budget,
+          review_budget_consumed = excluded.review_budget_consumed,
           invalid_resume_state = excluded.invalid_resume_state,
           invalid_resume_phase = excluded.invalid_resume_phase,
           updated_at = excluded.updated_at`)
@@ -148,6 +154,8 @@ export class StateStore {
         lane.planVerdictId ?? null,
         lane.iterationCount ?? 1,
         lane.currentIteration ?? 1,
+        lane.reviewBudget ?? null,
+        lane.reviewBudgetConsumed ?? 0,
         lane.invalidResumeState ?? null,
         lane.invalidResumePhase ?? null,
         new Date().toISOString(),
@@ -271,6 +279,8 @@ function toLane(row) {
     planVerdictId: row.plan_verdict_id,
     iterationCount: row.iteration_count,
     currentIteration: row.current_iteration,
+    reviewBudget: row.review_budget,
+    reviewBudgetConsumed: row.review_budget_consumed,
     invalidResumeState: row.invalid_resume_state,
     invalidResumePhase: row.invalid_resume_phase,
   }

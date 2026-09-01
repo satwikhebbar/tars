@@ -14,7 +14,8 @@ test("validates every supported workflow handoff type", () => {
     { ...base, type: "implementation-response", head_commit: "abc123" },
     { ...base, type: "implementation-response", workflow_id: "64.0", head_commit: "abc123" },
     { ...base, type: "code-review", outcome: "changes_requested" },
-    { ...base, type: "plan-review-verdict", outcome: "approved", iteration_count: 1 },
+    { ...base, type: "plan-review-verdict", outcome: "approved", iteration_count: 1, review_budget: 2 },
+    { ...base, type: "plan-review-verdict", outcome: "approved", iteration_count: 3, review_budget_per_iteration: 2 },
     { ...base, type: "plan-review-verdict", outcome: "blocked" },
   ]
 
@@ -37,7 +38,17 @@ test("enforces type-specific workflow metadata", () => {
   assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "implementation-response" })), ["missing head_commit"])
   assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "code-review", outcome: "pending" })), ["missing valid outcome"])
   assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "plan-review-verdict" })), ["missing valid outcome"])
-  assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "plan-review-verdict", outcome: "approved" })), ["approved plan verdict requires positive iteration_count"])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...base, type: "plan-review-verdict", outcome: "approved" })), ["approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration"])
+})
+
+test("approved plan verdicts require a review budget in one of its two forms", () => {
+  const approved = { ...base, type: "plan-review-verdict", outcome: "approved", iteration_count: 3 }
+  assert.deepEqual(validateWorkflowHandoff(handoff(approved)), ["approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration"])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...approved, review_budget: 0 })), ["approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration"])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...approved, review_budget_per_iteration: -1 })), ["approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration"])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...approved, review_budget: 6 })), [])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...approved, review_budget_per_iteration: 2 })), [])
+  assert.deepEqual(validateWorkflowHandoff(handoff({ ...approved, review_budget: 6, review_budget_per_iteration: 2 })), [])
 })
 
 test("requires an explicit reopen flag when validating an approved lane response", () => {
