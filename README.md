@@ -179,7 +179,14 @@ flowchart TD
 ```
 
 The reviewer uses an approved plan verdict to recommend the smallest sensible
-set of independently buildable and testable iterations. TARS stores the current
+set of independently buildable and testable iterations. On approval the verdict
+also selects the implementation's review budget — either `review_budget` (an
+explicit total) or `review_budget_per_iteration` (allowance × `iteration_count`).
+TARS persists it separately from the pre-approval `max_rounds` plan-review cap;
+only reviewer `changes_requested` cycles consume it, and the lane blocks with
+reason `review_budget` when it is exhausted. Raise it to recover:
+`tars lane set-max-rounds --worktree <path> --review-budget <n> --resume`.
+TARS stores the current
 iteration per worktree, so multiple plan-first and direct-build lanes can
 advance concurrently without crossing handoffs.
 

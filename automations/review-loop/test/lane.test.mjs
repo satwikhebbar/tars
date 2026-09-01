@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { groupForWorktree } from "../lib/aoe.mjs"
-import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneMaxRounds, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
 
 test("groups both sessions before watching an existing pair", async () => {
   const aoe = new FakeAoe()
@@ -84,13 +84,84 @@ test("updates a lane review budget without changing workflow state or sessions",
     },
   }
 
-  const updated = setLaneMaxRounds({ state, worktreePath: original.worktreePath, maxRounds: 15 })
+  const updated = setLaneLimits({ state, worktreePath: original.worktreePath, maxRounds: 15 })
 
   assert.equal(updated.maxRounds, 15)
   assert.equal(updated.state, "approved")
   assert.equal(updated.phase, "post_pr_feedback")
   assert.equal(updated.authorSessionId, "open-44")
   assert.equal(updated.reviewerSessionId, "codex-44")
+})
+
+test("updates the review budget without touching max_rounds or resetting consumption", () => {
+  const original = {
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    state: "blocked",
+    phase: "building",
+    maxRounds: 5,
+    reviewBudget: 2,
+    reviewBudgetConsumed: 2,
+  }
+  let stored = original
+  const state = {
+    lane: () => stored,
+    saveLane: (lane) => {
+      stored = lane
+    },
+  }
+
+  const updated = setLaneLimits({ state, worktreePath: original.worktreePath, reviewBudget: 10 })
+
+  assert.equal(updated.reviewBudget, 10)
+  assert.equal(updated.maxRounds, 5)
+  assert.equal(updated.reviewBudgetConsumed, 2)
+  assert.equal(updated.state, "blocked")
+})
+
+test("raises the review budget and explicitly resumes a blocked lane", () => {
+  const original = {
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    state: "blocked",
+    phase: "building",
+    maxRounds: 5,
+    reviewBudget: 1,
+    reviewBudgetConsumed: 1,
+  }
+  let stored = original
+  const state = {
+    lane: () => stored,
+    saveLane: (lane) => {
+      stored = lane
+    },
+  }
+
+  const updated = setLaneLimits({ state, worktreePath: original.worktreePath, reviewBudget: 3, resume: true })
+
+  assert.equal(updated.reviewBudget, 3)
+  assert.equal(updated.state, "implementing")
+  assert.equal(updated.phase, "building")
+  assert.equal(updated.reviewBudgetConsumed, 1)
+})
+
+test("refuses to update a lane with no limit flags", () => {
+  const original = {
+    worktreePath: "/repo-worktrees/issue-44-add-calendar-export",
+    authorSessionId: "open-44",
+    reviewerSessionId: "codex-44",
+    state: "blocked",
+    phase: "building",
+    maxRounds: 5,
+  }
+  const state = {
+    lane: () => original,
+    saveLane: () => {},
+  }
+
+  assert.throws(() => setLaneLimits({ state, worktreePath: original.worktreePath }), /requires --max-rounds or --review-budget/)
 })
 
 test("explicitly resumes a lane stopped at its round limit when increasing the budget", () => {
@@ -110,7 +181,7 @@ test("explicitly resumes a lane stopped at its round limit when increasing the b
     },
   }
 
-  const updated = setLaneMaxRounds({ state, worktreePath: original.worktreePath, maxRounds: 15, resume: true })
+  const updated = setLaneLimits({ state, worktreePath: original.worktreePath, maxRounds: 15, resume: true })
 
   assert.equal(updated.maxRounds, 15)
   assert.equal(updated.state, "implementing")
