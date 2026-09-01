@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TARS: Iteration-Aware Review Budgets</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.55; }
+  h1 { border-bottom: 2px solid #8884; padding-bottom: .4rem; }
+  h2 { margin-top: 2rem; }
+  h3 { margin-top: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #8886; padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #8882; }
+  code { background: #8882; padding: .1em .35em; border-radius: 4px; font-size: .92em; }
+  pre { background: #0001; border: 1px solid #8884; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+  .callout { border-left: 4px solid #888; background: #8881; padding: .6rem 1rem; border-radius: 0 6px 6px 0; }
+</style>
+</head>
+<body>
+
+<h1>TARS: Iteration-Aware Review Budgets</h1>
+
+<p><strong>Issue #10</strong> — <code>max_rounds</code> currently caps the global handoff <code>round</code> value. Plan
+revisions, planned implementation iterations, approvals, and reviewer-requested corrections all consume that one
+sequence, so a valid multi-iteration lane can block even when it has not exceeded its intended review-retry budget.
+The fix treats <code>round</code> as ordering/correlation metadata only and introduces a reviewer-selected, separately
+persisted review budget for the implementation phase.</p>
+
+<h2>Problem details</h2>
+<ul>
+  <li><code>ReviewLoopCoordinator.dispatchLane</code> (automations/review-loop/lib/coordinator.mjs, line ~105) blocks the lane whenever
+  <code>event.round &gt; lane.maxRounds</code> (default 5). <code>round</code> increments on <em>every</em> handoff in the workflow:
+  plan-review request, plan-review verdict, each plan revision, each <code>implementation-response</code>, and each
+  <code>code-review</code>.</li>
+  <li>A plan-first lane with <code>iteration_count: 3</code> publishes six mandatory handoffs before any feedback
+  (verdict + 3 responses + 3 reviews), plus the plan-review handoff itself — <code>round</code> reaches 7 with zero
+  <code>changes_requested</code>. The lane blocks as <code>blocked</code> (reason <code>max_rounds</code>) even though the
+  reviewer never asked for a retry. This is the core defect.</li>
+  <li><code>lib/recovery.mjs</code> mirrors the same round-based check (<code>analyzeLane</code> overLimit/pending/unconfirmed),
+  so <code>lane resume</code> reports the same premature <code>blocked</code> verdict.</li>
+  <li>Operator recovery today is <code>tars lane set-max-rounds --max-rounds &lt;n&gt; --resume</code> — a round-based
+  number that has no relation to the approved plan's iteration structure.</li>
+</ul>
+
+<h2>Design overview</h2>
+<p>Treat handoff <code>round</code> as <strong>ordering/correlation metadata only</strong>. When the reviewer approves a plan,
+the verdict carries the <strong>review budget</strong> the implementation may consume: either an explicit total
+(<code>review_budget</code>) or a per-iteration allowance (<code>review_budget_per_iteration</code>, total =
+allowance × <code>iteration_count</code>). TARS persists that budget separately from <code>max_rounds</code>, tracks how
+many reviewer <code>changes_requested</code> cycles have been dispatched, and blocks only when that budget is exhausted.
+Iterations, approvals, and implementation responses never consume the budget and never block.</p>
+
+<div class="callout">
+<strong>Two distinct limits, explicitly documented.</strong> <code>max_rounds</code> becomes the <em>plan-review retry
+cap</em>: it bounds the pre-approval planning phase of plan-first lanes and remains the fallback cap for direct-build
+lanes. The new <code>review_budget</code> is the <em>implementation-phase changes-requested budget</em>, chosen by the
+reviewer at plan approval. They are persisted and enforced independently; see the policies section below.
+</div>
+
+<p>Implementation is additive and surgical: new verdict fields + validation, two new lane columns with a migration,
+a shared pure limit helper used by both the coordinator and recovery (so they cannot diverge), a consumption counter
+incremented at dispatch, a recovery flag on the existing <code>lane set-max-rounds</code> command, docs, and tests.</p>
+
+<h2>Explicit policies</h2>
+
+<h3>1. Plan-review retry policy (pre-approval)</h3>
+<ul>
+  <li>While a plan-first lane is in the <code>planning</code> phase (plan not yet approved, <code>planVerdictId</code> unset),
+  plan-phase events — author <code>plan-review</code>, reviewer <code>plan-review-verdict</code> with <code>changes_requested</code>
+  or <code>approved</code> — remain bounded by the lane's <code>max_rounds</code> round cap (default 5). A plan-phase event
+  whose <code>round</code> exceeds <code>max_rounds</code> blocks the lane with reason <code>max_rounds</code>.</li>
+  <li>This cap applies <strong>only</strong> before approval. Once the approved verdict is processed, <code>max_rounds</code>
+  no longer limits any implementation event; <code>round</code> is pure ordering metadata from then on.</li>
+  <li>Policy is captured in this plan, the review-loop README, and <code>protocols/README.md</code>; the coordinator and
+  recovery enforce it through one shared helper.</li>
+</ul>
+
+<h3>2. Implementation review budget (post-approval)</h3>
+<ul>
+  <li>An approved <code>plan-review-verdict</code> must carry a positive <code>iteration_count</code> (existing) and exactly the
+  budget: <code>review_budget: &lt;total&gt;</code> (explicit total changes-requested allowance) <em>or</em>
+  <code>review_budget_per_iteration: &lt;n&gt;</code> (per-iteration allowance; total = <code>n × iteration_count</code>).
+  If both are present, the explicit <code>review_budget</code> wins.</li>
+  <li>TARS persists the computed total in the lane row (<code>review_budget</code>) together with a counter
+  (<code>review_budget_consumed</code>, default 0), stored separately from <code>max_rounds</code>.</li>
+  <li>Each implementation-phase <code>code-review</code> handoff with <code>outcome: changes_requested</code> consumes exactly
+  one unit <em>at the moment TARS dispatches it to the author</em>. Iteration transitions, approvals, implementation
+  responses, plan-phase events, and reopen markers never consume the budget.</li>
+  <li>A <code>changes_requested</code> event that would push consumption over the budget blocks the lane with reason
+  <code>review_budget</code>; nothing is dispatched and nothing is consumed. A <code>blocked</code> verdict (plan or code) is
+  the reviewer's explicit stop and is <em>never</em> budget-blocked.</li>
+  <li>A deliberately reopened approved lane (PR feedback) returns to the same rules: its <code>changes_requested</code>
+  cycles consume the same budget; its approvals never do. This keeps the reopen flow bounded and recoverable.</li>
+</ul>
+
+<h3>3. Direct-build fallback</h3>
+<ul>
+  <li>Direct-build lanes have no plan approval, so no reviewer-selected budget exists. They keep today's behavior:
+  <code>max_rounds</code> caps <code>round</code> for their entire lifecycle. This is the documented fallback policy.</li>
+  <li>A plan-first lane whose verdict somehow lacks a budget (prevented by validation, but defended anyway) falls back
+  to the same round cap for its <code>changes_requested</code> events.</li>
+</ul>
+
+<h2>Handoff protocol changes</h2>
+<h3>Approved plan-review verdict (new fields)</h3>
+<pre><code>---
+id: 53-plan-review-1-verdict
+type: plan-review-verdict
+created_by: reviewer
+workflow_id: 53
+round: 1
+outcome: approved
+iteration_count: 3
+review_budget_per_iteration: 2   # or review_budget: 6 for the explicit total
+responds_to: 53-plan-review-1
+---</code></pre>
+
+<ul>
+  <li><code>validateWorkflowHandoff</code> (lib/handoff.mjs): an approved <code>plan-review-verdict</code> now requires a positive
+  <code>iteration_count</code> <em>and</em> at least one of <code>review_budget</code> / <code>review_budget_per_iteration</code>
+  (positive integers). Error: <code>approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration</code>.
+  <code>tars handoff validate</code> picks this up, so a reviewer who omits the budget is corrected before dispatch.</li>
+  <li><code>classifyEvent</code> is unchanged (it does not need the new fields; round/outcome/iteration drive routing).</li>
+  <li>The coordinator's plan-review reviewer prompt (lib/coordinator.mjs <code>promptFor</code>) instructs the reviewer to
+  include the budget on approval: <em>include a positive iteration_count, a numbered Implementation Iterations schedule,
+  and the review budget the implementation may consume: either <code>review_budget &lt;total&gt;</code> or
+  <code>review_budget_per_iteration &lt;allowance&gt;</code> (allowance × iteration_count).</em></li>
+  <li><code>skills/shared/handoff-review/SKILL.md</code> reviewer section and <code>protocols/README.md</code> document the same
+  fields so every harness teaches its reviewers the contract.</li>
+</ul>
+
+<h2>Persistence (lib/state.mjs)</h2>
+<ul>
+  <li>Two additive columns on <code>lanes</code>: <code>review_budget INTEGER</code> (NULL = no reviewer-selected budget) and
+  <code>review_budget_consumed INTEGER NOT NULL DEFAULT 0</code>. Both are added to <code>CREATE TABLE</code> and to the
+  existing migration <code>ALTER TABLE</code> loop, so pre-existing databases upgrade in place (existing lanes get
+  <code>review_budget NULL</code> → direct-build/fallback behavior).</li>
+  <li><code>saveLane</code> writes both (<code>lane.reviewBudget ?? null</code>, <code>lane.reviewBudgetConsumed ?? 0</code>);
+  <code>toLane</code> maps them to <code>reviewBudget</code> / <code>reviewBudgetConsumed</code>.</li>
+</ul>
+
+<h2>Coordinator (lib/coordinator.mjs)</h2>
+<ul>
+  <li>New exported pure helper, shared with recovery:
+<pre><code>export function laneLimitViolation(lane, event, { alreadyConsumed = false } = {}) {
+  if (event.outcome === "blocked") return null
+  if (event.reviewKind === "plan" || (lane.planning === "required" &amp;&amp; !lane.planVerdictId)) {
+    return event.round &gt; lane.maxRounds ? "max_rounds" : null          // planning phase
+  }
+  if (event.reviewKind !== "code") return null
+  if (event.outcome === "changes_requested") {
+    if (Number.isInteger(lane.reviewBudget)) {
+      return (lane.reviewBudgetConsumed ?? 0) + (alreadyConsumed ? 0 : 1) &gt; lane.reviewBudget
+        ? "review_budget" : null
+    }
+    return event.round &gt; lane.maxRounds ? "max_rounds" : null            // direct-build fallback
+  }
+  if (!Number.isInteger(lane.reviewBudget)) return event.round &gt; lane.maxRounds ? "max_rounds" : null
+  return null                                                           // planned approvals/responses: never capped
+}</code></pre>
+  The <code>alreadyConsumed</code> flag lets recovery re-check already-dispatched events without double-counting their own
+  consumption (keeps stale-delivery detection working for the last budgeted retry).</li>
+  <li><code>dispatchLane</code>: replace <code>if (event.round &gt; lane.maxRounds)</code> with
+  <code>const violation = laneLimitViolation(lane, event)</code>; block with <code>reason: violation</code> (either
+  <code>"max_rounds"</code> or <code>"review_budget"</code>).</li>
+  <li><code>dispatchLane</code>: when dispatching a <code>code-review</code> <code>changes_requested</code> event to the author
+  (the general author branch), persist <code>reviewBudgetConsumed: (lane.reviewBudgetConsumed ?? 0) + 1</code> in the
+  same <code>saveLane</code>. No other branch touches the counter.</li>
+  <li>New helper <code>reviewBudgetFor(metadata)</code>: explicit <code>review_budget</code> if positive, else
+  <code>review_budget_per_iteration × iterationCountFor(metadata)</code>, else <code>null</code>. Both plan-approval paths —
+  the OpenCode compact path and the non-OpenCode direct-build path — persist <code>reviewBudget: reviewBudgetFor(...)</code>
+  on the lane at approval.</li>
+</ul>
+
+<h2>Recovery and reporting (lib/recovery.mjs)</h2>
+<ul>
+  <li>Import <code>laneLimitViolation</code>; replace every round-based filter:
+  <ul>
+    <li>overLimit: <code>!dispatched.has(event.key) &amp;&amp; laneLimitViolation(lane, event)</code> → <code>blocked</code>
+    with reason <code>max_rounds</code> or <code>review_budget</code>.</li>
+    <li>pending: <code>!laneLimitViolation(lane, event)</code>.</li>
+    <li>unconfirmed: <code>!laneLimitViolation(lane, event, { alreadyConsumed: true })</code>.</li>
+  </ul></li>
+  <li><code>formatAnalysis</code> prints the budget when set: <code>Review budget: 6 (consumed 2)</code> appended to the
+  State line, so a blocked-at-budget lane is diagnosable at a glance.</li>
+</ul>
+
+<h2>CLI (cli.mjs, lib/lane.mjs)</h2>
+<ul>
+  <li>Rename <code>setLaneMaxRounds</code> → <code>setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, resume })</code>;
+  updates whichever of <code>maxRounds</code> / <code>reviewBudget</code> is provided (at least one required), keeps the
+  existing opt-in <code>--resume</code> semantics (unblocks <code>blocked</code> → <code>planning</code> or <code>implementing</code>
+  by phase). The consumption counter is never reset by raising the budget.</li>
+  <li><code>tars lane set-max-rounds</code> gains an optional <code>--review-budget &lt;number&gt;</code> flag; the command requires
+  at least one of <code>--max-rounds</code> / <code>--review-budget</code>, prints both limits, and is the recovery surface
+  for budget exhaustion (<code>--review-budget 10 --resume</code>). The command name is kept for compatibility.</li>
+  <li>Usage text updated to <code>tars lane set-max-rounds --worktree &lt;path&gt; --max-rounds &lt;number&gt; [--review-budget &lt;number&gt;] [--resume]</code>.</li>
+  <li>No new budget flag on <code>lane start</code> / <code>lane register</code> / <code>start</code>: the approved verdict is the source
+  of the implementation budget (see out of scope).</li>
+</ul>
+
+<h2>Docs and shared skills</h2>
+<ul>
+  <li><span class="mono">automations/review-loop/README.md</span>: document the two-limit model, the explicit plan-review retry
+  policy, budget fields on the approved verdict, consumption rules, <code>review_budget</code> blocked reason,
+  <code>lane set-max-rounds --review-budget</code> recovery, and the updated <code>blocked</code> verdict row
+  (<em>exceeds <code>max_rounds</code> or the review budget</em>).</li>
+  <li><span class="mono">protocols/README.md</span>: step 1 gains the budget fields and a sentence that <code>round</code> is
+  ordering metadata that never caps implementation work.</li>
+  <li><span class="mono">skills/shared/handoff-review/SKILL.md</span>: reviewer guidance for the approved verdict adds the
+  budget fields.</li>
+  <li><span class="mono">README.md</span> (root): short lifecycle note on review budgets.</li>
+  <li><span class="mono">automations/review-loop/MANUAL-TEST-PLAN.md</span>: add a manual check for a multi-iteration plan-first
+  lane with budget exhaustion and recovery.</li>
+</ul>
+
+<h2>File changes</h2>
+<table>
+  <tr><th>File</th><th>Change</th></tr>
+  <tr><td class="mono">automations/review-loop/lib/handoff.mjs</td><td>Validate approved plan verdicts require <code>review_budget</code> or <code>review_budget_per_iteration</code>.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/state.mjs</td><td>Add <code>review_budget</code> + <code>review_budget_consumed</code> columns, migration, saveLane, toLane.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/coordinator.mjs</td><td>Add exported <code>laneLimitViolation</code> + <code>reviewBudgetFor</code>; replace round check; consume on changes_requested dispatch; persist budget at plan approval (both paths); reviewer prompt update.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/recovery.mjs</td><td>Use <code>laneLimitViolation</code> in overLimit/pending/unconfirmed; report <code>review_budget</code> blocking; print budget/consumed in <code>formatAnalysis</code>.</td></tr>
+  <tr><td class="mono">automations/review-loop/lib/lane.mjs</td><td>Rename/extend <code>setLaneMaxRounds</code> → <code>setLaneLimits</code> with optional <code>reviewBudget</code>.</td></tr>
+  <tr><td class="mono">automations/review-loop/cli.mjs</td><td><code>--review-budget</code> option on <code>lane set-max-rounds</code>; require at least one limit; usage text.</td></tr>
+  <tr><td class="mono">automations/review-loop/test/handoff.test.mjs</td><td>Valid approved verdicts include a budget; missing-budget verdicts are invalid; both budget forms accepted.</td></tr>
+  <tr><td class="mono">automations/review-loop/test/state.test.mjs</td><td>Round-trip <code>review_budget</code> / <code>review_budget_consumed</code>; migration default for pre-existing rows.</td></tr>
+  <tr><td class="mono">automations/review-loop/test/coordinator.test.mjs</td><td>Budget from verdict (both forms); three-iteration plan with approvals never blocks and consumes nothing; changes_requested consumes; exhaustion blocks with <code>review_budget</code>; plan-phase round cap; budget persisted on compact and non-OpenCode approval paths.</td></tr>
+  <tr><td class="mono">automations/review-loop/test/recovery.test.mjs</td><td>Undispatched event over budget → <code>blocked</code> (review_budget); stale-detection still works for the last budgeted retry; <code>formatAnalysis</code> prints budget; <code>setLaneLimits</code> raise + <code>--resume</code> + <code>--dispatch</code> recovers.</td></tr>
+  <tr><td class="mono">automations/review-loop/test/lane.test.mjs</td><td>Rename <code>setLaneMaxRounds</code> → <code>setLaneLimits</code>; add reviewBudget update cases.</td></tr>
+  <tr><td class="mono">automations/review-loop/README.md, protocols/README.md, skills/shared/handoff-review/SKILL.md, README.md, MANUAL-TEST-PLAN.md</td><td>Document the policies, verdict fields, recovery, and manual checks.</td></tr>
+</table>
+
+<h2>Tests</h2>
+<p>Run: <code class="mono">node --test automations/review-loop/test/*.test.mjs</code> (existing suites remain green; 84 tests today).</p>
+<ul>
+  <li><strong>Three-iteration plan (acceptance 1, 3, 6):</strong> approved verdict <code>iteration_count: 3</code> →
+  drive iterations 1–3 with ordinary approvals; the lane reaches <code>approved</code> and <code>reviewBudgetConsumed === 0</code>
+  even though <code>round</code> exceeds <code>max_rounds</code>; no blocking occurs.</li>
+  <li><strong>Budget carried by the verdict (acceptance 1):</strong> explicit <code>review_budget: 6</code> and
+  <code>review_budget_per_iteration: 2</code> (with count 3) both persist <code>reviewBudget === 6</code> on the lane via both
+  approval paths (OpenCode compact and non-OpenCode).</li>
+  <li><strong>Persisted separately (acceptance 2):</strong> lane row round-trips <code>reviewBudget</code> /
+  <code>reviewBudgetConsumed</code> through <code>saveLane</code>/<code>lane</code>; legacy rows migrate with
+  <code>reviewBudget null</code>, <code>consumed 0</code>.</li>
+  <li><strong>Repeated changes-requested (acceptance 4):</strong> several <code>changes_requested</code> cycles in one
+  iteration each dispatch and increment consumption; approvals interspersed never consume.</li>
+  <li><strong>Exhaustion (acceptance 4):</strong> budget 1 → first <code>changes_requested</code> dispatches (consumed 1);
+  second blocks with reason <code>review_budget</code>, sends nothing, state <code>blocked</code>.</li>
+  <li><strong>Plan-review retry policy (acceptance 5):</strong> pre-approval <code>plan-review</code> at <code>round &gt; max_rounds</code>
+  still blocks with <code>max_rounds</code>; after approval, a high-round approval/response never blocks. Direct-build lane
+  round cap is unchanged (existing test).</li>
+  <li><strong>Recovery/reporting (acceptance 6):</strong> <code>analyzeLane</code> reports <code>blocked</code> (review_budget) for a
+  queued over-budget <code>changes_requested</code>; <code>formatAnalysis</code> prints <code>Review budget: N (consumed M)</code>;
+  <code>setLaneLimits({ reviewBudget: 3, resume: true })</code> then <code>resumeLane --dispatch</code> dispatches exactly once;
+  a dispatched last-budgeted retry with no advancement still reports <code>stale_delivery</code> (not blocked).</li>
+  <li><strong>Validation (acceptance 1):</strong> approved verdict without a budget field is invalid; with either form is valid.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>Pre-setting a review budget via <code>lane start</code> / <code>lane register</code> / <code>start</code> flags; the approved
+  verdict is the authoritative source, and direct-build lanes keep <code>max_rounds</code>.</li>
+  <li>Storing/enforcing the per-iteration allowance granularly; only the computed total is persisted and enforced.</li>
+  <li>Changing direct-build lane semantics or the post-approval reopen handoff format.</li>
+  <li>Resetting <code>review_budget_consumed</code> at approval or on reopen; consumption is monotonic history and the
+  operator raises the budget when recovery is needed.</li>
+</ul>
+
+</body>
+</html>
