@@ -42,6 +42,55 @@ test("an undispatched event over max_rounds blocks the lane", async () => {
   fixture.state.close()
 })
 
+test("an undispatched event over the review budget blocks the lane", async () => {
+  const fixture = await laneFixture({
+    planning: "required",
+    planVerdictId: "53-plan-review-1-verdict",
+    reviewBudget: 1,
+    reviewBudgetConsumed: 1,
+  })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review.md",
+    `id: fix-r2-review\ntype: code-review\nworkflow_id: fix\nround: 2\niteration: 1\noutcome: changes_requested`,
+  )
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "blocked")
+  assert.match(analysis.reasons[0], /review budget 1 \(consumed 1\)/)
+  fixture.state.close()
+})
+
+test("a dispatched last-budgeted retry with no advancement reports stale, not over-budget", async () => {
+  const fixture = await laneFixture({
+    planning: "required",
+    planVerdictId: "53-plan-review-1-verdict",
+    reviewBudget: 1,
+    reviewBudgetConsumed: 1,
+  })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review.md",
+    `id: fix-r2-review\ntype: code-review\nworkflow_id: fix\nround: 2\niteration: 1\noutcome: changes_requested`,
+  )
+  fixture.state.markDispatched(fixture.worktree, "review:fix-r2-review:changes_requested")
+  ageDispatch(fixture, "review:fix-r2-review:changes_requested")
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "stale_delivery")
+  fixture.state.close()
+})
+
+test("formatAnalysis reports the review budget and its consumed count", async () => {
+  const fixture = await laneFixture({
+    planning: "required",
+    planVerdictId: "53-plan-review-1-verdict",
+    reviewBudget: 2,
+    reviewBudgetConsumed: 1,
+  })
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.match(formatAnalysis(analysis), /review budget 2 \(consumed 1\)/)
+  fixture.state.close()
+})
+
 test("resume without flags is read-only", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
@@ -436,6 +485,9 @@ async function laneFixture({
   maxRounds = 5,
   iterationCount = 1,
   currentIteration = 1,
+  reviewBudget = null,
+  reviewBudgetConsumed = 0,
+  planVerdictId = null,
 } = {}) {
   const worktree = await mkdtemp(join(tmpdir(), "agent-review-loop-resume-"))
   await Promise.all([
@@ -454,6 +506,9 @@ async function laneFixture({
     phase,
     iterationCount,
     currentIteration,
+    reviewBudget,
+    reviewBudgetConsumed,
+    planVerdictId,
   })
   const aoe = new FakeAoe()
   aoe.sessions = [

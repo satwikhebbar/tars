@@ -4,6 +4,7 @@ import {
   classifyEvent,
   compareEvents,
   handoffsFor,
+  laneLimitViolation,
   matchesCurrentIteration,
   ReviewLoopCoordinator,
   readHandoffs,
@@ -75,16 +76,23 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
   }
 
   const overLimit = events.filter(
-    (event) => !dispatched.has(event.key) && event.round > lane.maxRounds && matchesCurrentIteration(lane, event),
+    (event) => !dispatched.has(event.key) && laneLimitViolation(lane, event) && matchesCurrentIteration(lane, event),
   )
-  if (overLimit.length) return finish("blocked", `undispatched event exceeds max_rounds ${lane.maxRounds}`)
+  if (overLimit.length) {
+    const violation = laneLimitViolation(lane, overLimit[0])
+    const detail =
+      violation === "review_budget"
+        ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})`
+        : `max_rounds ${lane.maxRounds}`
+    return finish("blocked", `undispatched event exceeds ${detail}`)
+  }
 
   const pending = events.filter(
     (event) =>
       !dispatched.has(event.key) &&
       !(lane.state === "approved" && !event.reopensLane) &&
       matchesCurrentIteration(lane, event) &&
-      event.round <= lane.maxRounds,
+      !laneLimitViolation(lane, event),
   )
   analysis.pending = pending
 
@@ -112,7 +120,7 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     (event) =>
       dispatched.has(event.key) &&
       matchesCurrentIteration(lane, event) &&
-      event.round <= lane.maxRounds &&
+      !laneLimitViolation(lane, event, { alreadyConsumed: true }) &&
       !hasAdvancement(allHandoffs, event),
   )
   analysis.unconfirmed = unconfirmed
@@ -302,9 +310,12 @@ async function readAllHandoffs(worktreePath) {
 export function formatAnalysis(analysis) {
   const { lane, sessions } = analysis
   const iteration = lane.iterationCount > 1 ? `, iteration ${lane.currentIteration}/${lane.iterationCount}` : ""
+  const budget = Number.isInteger(lane.reviewBudget)
+    ? `, review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})`
+    : ""
   const lines = [
     `Worktree: ${analysis.worktreePath}`,
-    `State:    ${lane.state} (phase ${lane.phase}${iteration})`,
+    `State:    ${lane.state} (phase ${lane.phase}${iteration}${budget})`,
     `Sessions: author ${sessions.author.id} [${sessions.author.activity}]`,
     `          reviewer ${sessions.reviewer.id} [${sessions.reviewer.activity}]`,
     `Verdict:  ${analysis.verdict}`,

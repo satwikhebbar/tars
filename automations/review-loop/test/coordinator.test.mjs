@@ -162,6 +162,64 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
   assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 2)
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 0)
+  fixture.state.close()
+})
+
+test("derives the review budget from the approved verdict on the non-OpenCode approval path", async () => {
+  const perIteration = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
+  await writeWorkflowHandoff(
+    perIteration.worktree,
+    "inbox/plan-verdict.md",
+    `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 3\nreview_budget_per_iteration: 2`,
+  )
+  await perIteration.coordinator.processAll()
+  assert.equal(perIteration.state.lane(perIteration.worktree).reviewBudget, 6)
+  perIteration.state.close()
+
+  const explicit = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
+  await writeWorkflowHandoff(
+    explicit.worktree,
+    "inbox/plan-verdict.md",
+    `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 3\nreview_budget: 5`,
+  )
+  await explicit.coordinator.processAll()
+  assert.equal(explicit.state.lane(explicit.worktree).reviewBudget, 5)
+  explicit.state.close()
+})
+
+test("a code-review changes_requested consumes the budget and exhaustion blocks the lane", async () => {
+  const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
+  fixture.state.saveLane({
+    ...fixture.state.lane(fixture.worktree),
+    planning: "required",
+    phase: "building",
+    planVerdictId: "plan-verdict",
+    iterationCount: 1,
+    currentIteration: 1,
+    reviewBudget: 1,
+    reviewBudgetConsumed: 0,
+  })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review-1.md",
+    `id: fix-r2-review\ntype: code-review\nworkflow_id: fix\nround: 2\niteration: 1\noutcome: changes_requested`,
+  )
+  await fixture.coordinator.processAll()
+  assert.equal(fixture.aoe.sent.at(-1).sessionId, "opencode-1")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 1)
+
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review-2.md",
+    `id: fix-r3-review\ntype: code-review\nworkflow_id: fix\nround: 3\niteration: 1\noutcome: changes_requested`,
+  )
+  const blocked = await fixture.coordinator.processAll()
+  assert.equal(blocked[0].action, "blocked")
+  assert.equal(blocked[0].reason, "review_budget")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "blocked")
+  assert.equal(fixture.aoe.sent.length, 1)
   fixture.state.close()
 })
 
