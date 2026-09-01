@@ -62,7 +62,14 @@ export function validateWorkflowHandoff(handoff, { requiresReopen = false } = {}
   if (metadata.type === "implementation-response" && (typeof metadata.head_commit !== "string" || !metadata.head_commit.trim())) errors.push("missing head_commit")
   if (requiresReopen && metadata.type === "implementation-response" && metadata.reopen !== true) errors.push("approved lane requires reopen: true")
   if (["plan-review-verdict", "code-review"].includes(metadata.type) && !["approved", "changes_requested", "blocked"].includes(metadata.outcome)) errors.push("missing valid outcome")
-  if (metadata.type === "plan-review-verdict" && metadata.outcome === "approved" && (!Number.isInteger(metadata.iteration_count) || metadata.iteration_count < 1)) errors.push("approved plan verdict requires positive iteration_count")
+  if (metadata.type === "plan-review-verdict" && metadata.outcome === "approved") {
+    const hasBudget =
+      (Number.isInteger(metadata.review_budget) && metadata.review_budget > 0) ||
+      (Number.isInteger(metadata.review_budget_per_iteration) && metadata.review_budget_per_iteration > 0)
+    if (!Number.isInteger(metadata.iteration_count) || metadata.iteration_count < 1 || !hasBudget) {
+      errors.push("approved plan verdict requires positive iteration_count and review_budget or review_budget_per_iteration")
+    }
+  }
   return errors
 }
 

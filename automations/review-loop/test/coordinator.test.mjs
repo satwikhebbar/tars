@@ -69,7 +69,7 @@ test("routes role-based author handoffs to a non-Codex reviewer and ignores the 
 
 test("a non-OpenCode author starts approved plan work without an OpenCode compact command", async () => {
   const fixture = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
-  await writeWorkflowHandoff(fixture.worktree, "inbox/plan-verdict.md", `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 1`)
+  await writeWorkflowHandoff(fixture.worktree, "inbox/plan-verdict.md", `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 1\nreview_budget: 1`)
   const result = await fixture.coordinator.processAll()
   assert.equal(result[0].action, "sent:author:build")
   assert.equal(fixture.aoe.sent[0].sessionId, "opencode-1")
@@ -92,7 +92,7 @@ test("plan approval compacts then starts Build mode without approving the lane",
   await writeWorkflowHandoff(
     fixture.worktree,
     "inbox/plan-verdict.md",
-    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 1\nresponds_to: 53-plan-review-1`,
+    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 1\nreview_budget: 1\nresponds_to: 53-plan-review-1`,
   )
   await fixture.coordinator.processAll()
   assert.deepEqual(fixture.aoe.sent.map((entry) => entry.sessionId), ["codex-1", "opencode-1"])
@@ -116,7 +116,7 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   await writeWorkflowHandoff(
     fixture.worktree,
     "inbox/plan-verdict.md",
-    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 2\nresponds_to: 53-plan-review-1`,
+    `id: 53-plan-review-1-verdict\ntype: plan-review-verdict\ncreated_by: codex\nworkflow_id: 53\nround: 1\noutcome: approved\niteration_count: 2\nreview_budget: 2\nresponds_to: 53-plan-review-1`,
   )
   await fixture.coordinator.processAll()
   const compactingLane = fixture.state.lane(fixture.worktree)
