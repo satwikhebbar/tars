@@ -102,9 +102,10 @@ export class ReviewLoopCoordinator {
       if (this.state.hasDispatched(lane.worktreePath, event.key)) continue
       if (lane.state === "approved" && !event.reopensLane) continue
       if (!matchesCurrentIteration(lane, event)) continue
-      if (event.round > lane.maxRounds) {
+      const limitViolation = laneLimitViolation(lane, event)
+      if (limitViolation) {
         this.state.saveLane({ ...lane, state: "blocked" })
-        results.push({ event, action: "blocked", reason: "max_rounds" })
+        results.push({ event, action: "blocked", reason: limitViolation })
         break
       }
       if (event.destination === "terminal") {
@@ -135,7 +136,7 @@ export class ReviewLoopCoordinator {
         if (lane.authorHarness !== "opencode") {
           await this.aoe.send(sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
           this.state.markDispatched(lane.worktreePath, event.key)
-          this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1 })
+          this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, reviewBudget: reviewBudgetFor(event.handoff.metadata) })
           results.push({ event, action: "sent:author:build" })
           break
         }
@@ -150,18 +151,25 @@ export class ReviewLoopCoordinator {
           planVerdictId: event.handoff.metadata.id,
           iterationCount: iterationCountFor(event.handoff.metadata),
           currentIteration: 1,
+          reviewBudget: reviewBudgetFor(event.handoff.metadata),
         })
         await this.aoe.send(sessionId, "/compact")
         this.state.markDispatched(lane.worktreePath, event.key)
         results.push({ event, action: "sent:author:compact" })
         break
       }
+      const consumesBudget =
+        event.destination === "author" &&
+        event.reviewKind === "code" &&
+        event.outcome === "changes_requested" &&
+        Number.isInteger(lane.reviewBudget)
       await this.aoe.send(sessionId, authorPrompt(lane, event))
       this.state.markDispatched(lane.worktreePath, event.key)
       this.state.saveLane({
         ...lane,
         state: event.destination === "reviewer" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
         phase: event.reopensLane ? "post_pr_feedback" : lane.phase,
+        ...(consumesBudget ? { reviewBudgetConsumed: (lane.reviewBudgetConsumed ?? 0) + 1 } : {}),
       })
       results.push({ event, action: `sent:${event.destination === "reviewer" ? lane.reviewerHarness : lane.authorHarness}` })
       break
@@ -309,6 +317,7 @@ export function classifyEvent(handoff) {
         handoff,
         round: metadata.round,
         destination: "author",
+        outcome: metadata.outcome,
         reviewKind: "code",
         iteration: iterationFor(metadata),
       }
@@ -321,10 +330,34 @@ export function compareEvents(left, right) {
   return left.round - right.round || left.key.localeCompare(right.key)
 }
 
+/**
+ * Returns the limit a queued event would violate -- `"max_rounds"` or
+ * `"review_budget"` -- or `null` when it may be dispatched. Shared by the
+ * coordinator and recovery so they cannot diverge. `alreadyConsumed` lets
+ * recovery re-check an already-dispatched event without re-counting the unit
+ * that its own dispatch consumed, so a last-budgeted retry stays a candidate
+ * for stale re-delivery rather than being misreported as blocked.
+ */
+export function laneLimitViolation(lane, event, { alreadyConsumed = false } = {}) {
+  if (event.outcome === "blocked") return null
+  if (event.reviewKind === "plan" || (lane.planning === "required" && !lane.planVerdictId)) {
+    return event.round > lane.maxRounds ? "max_rounds" : null
+  }
+  if (event.reviewKind !== "code") return null
+  if (event.outcome === "changes_requested") {
+    if (Number.isInteger(lane.reviewBudget)) {
+      return (lane.reviewBudgetConsumed ?? 0) + (alreadyConsumed ? 0 : 1) > lane.reviewBudget ? "review_budget" : null
+    }
+    return event.round > lane.maxRounds ? "max_rounds" : null
+  }
+  if (!Number.isInteger(lane.reviewBudget)) return event.round > lane.maxRounds ? "max_rounds" : null
+  return null
+}
+
 function promptFor(lane, event) {
   const path = event.handoff.path
   if (event.destination === "reviewer" && event.reviewKind === "plan") {
-    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count and a numbered Implementation Iterations schedule. Do not implement the plan or edit implementation files.`
+    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count, a numbered Implementation Iterations schedule, and the review budget the implementation may consume: either review_budget <total> or review_budget_per_iteration <allowance> (allowance x iteration_count). Do not implement the plan or edit implementation files.`
   }
   if (event.destination === "reviewer") {
     return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
@@ -357,6 +390,15 @@ function buildPrompt(lane, prompt, { force = false } = {}) {
 
 function iterationCountFor(metadata) {
   return Number.isInteger(metadata.iteration_count) && metadata.iteration_count > 0 ? metadata.iteration_count : 1
+}
+
+/** Derives the total implementation review budget from an approved plan verdict. */
+export function reviewBudgetFor(metadata) {
+  if (Number.isInteger(metadata.review_budget) && metadata.review_budget > 0) return metadata.review_budget
+  if (Number.isInteger(metadata.review_budget_per_iteration) && metadata.review_budget_per_iteration > 0) {
+    return metadata.review_budget_per_iteration * iterationCountFor(metadata)
+  }
+  return null
 }
 
 function iterationFor(metadata) {
