@@ -38,10 +38,12 @@ export class AoeClient {
     await execFileAsync(this.command, ["send", sessionId, message])
   }
 
-  async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false } = {}) {
+  async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false, force = false, purge = false } = {}) {
     const args = ["remove", sessionId]
     if (deleteWorktree) args.push("--delete-worktree")
     if (deleteBranch) args.push("--delete-branch")
+    if (force) args.push("--force")
+    if (purge) args.push("--purge")
     await execFileAsync(this.command, args)
   }
 

@@ -55,7 +55,15 @@ export class ReviewLoopCoordinator {
   async dispatchLane(lane) {
     if (lane.state === "blocked") return []
     const { handoffs, invalidHandoffs } = await handoffsFor(lane.worktreePath)
+    const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     const contextualInvalidHandoffs = handoffs
+      // A lane may be approved with its complete history still in the queue.
+      // Only a newly published implementation response is a post-approval
+      // reopen candidate; prior dispatched responses must remain valid history.
+      .filter((handoff) => {
+        const event = events.find((candidate) => candidate.handoff.path === handoff.path)
+        return event?.reviewKind === "code" && !this.state.hasDispatched(lane.worktreePath, event.key)
+      })
       .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff, { requiresReopen: activeLaneState(lane) === "approved" }) }))
       .filter((invalid) => invalid.errors.length)
     const invalid = invalidHandoffs[0] ?? contextualInvalidHandoffs[0]
@@ -81,7 +89,6 @@ export class ReviewLoopCoordinator {
       }
       this.state.saveLane(lane)
     }
-    const events = handoffs.map(classifyEvent).filter(Boolean).sort(compareEvents)
     // A completed lane is normally immutable. The one explicit exception is
     // a fresh implementation response that declares it is addressing feedback
     // on the lane's already-open pull request.

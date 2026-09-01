@@ -171,6 +171,24 @@ test("starts a planning lane with OpenCode's configured Plan agent", async () =>
   assert.equal(state.entries[0].phase, "planning")
 })
 
+test("starts a Codex planning lane without OpenCode-only agent flags", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const roles = {
+    author: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+    reviewer: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+  }
+  await startLane({
+    aoe, state, roles, repoPath: "/repo", issue: { number: 66, title: "Plan review" },
+    branch: "issue/66-plan-review", worktreeName: "issue-66-plan-review", maxRounds: 5,
+    planning: "required", openingPrompt: "plan",
+  })
+
+  assert.deepEqual(aoe.extraArgs, ["--approve-for-me"])
+  assert.deepEqual(aoe.reviewerExtraArgs, ["--approve-for-me"])
+  assert.equal(state.entries[0].phase, "planning")
+})
+
 test("groups a newly started lane by its actual worktree path", async () => {
   const aoe = new FakeAoe()
   aoe.worktreePath = "/repo-worktrees/actual-worktree"
@@ -241,8 +259,8 @@ test("closes an approved lane through AoE before deleting its worktree", async (
   await closeLane({ aoe, state, worktreePath })
 
   assert.deepEqual(aoe.removed, [
-    ["codex-44", {}],
-    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+    ["codex-44", { purge: true }],
+    ["open-44", { deleteWorktree: true, deleteBranch: true, force: false, purge: true }],
   ])
   assert.equal(state.lane(worktreePath), null)
 })
@@ -269,8 +287,8 @@ test("closes an approved lane temporarily masked by an invalid stale handoff", a
 
   assert.equal(state.lane(worktreePath), null)
   assert.deepEqual(aoe.removed, [
-    ["codex-44", {}],
-    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+    ["codex-44", { purge: true }],
+    ["open-44", { deleteWorktree: true, deleteBranch: true, force: false, purge: true }],
   ])
 })
 
@@ -342,8 +360,8 @@ test("force-closes a stopped non-approved lane, but never a live one", async () 
   aoe.runtime[0].state = "dead"
   await closeLane({ aoe, state, worktreePath, force: true })
   assert.deepEqual(aoe.removed, [
-    ["codex-44", {}],
-    ["open-44", { deleteWorktree: true, deleteBranch: true }],
+    ["codex-44", { purge: true }],
+    ["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
   ])
   assert.deepEqual(aoe.deletedGroups, [groupForWorktree(worktreePath)])
   assert.equal(state.lane(worktreePath), null)

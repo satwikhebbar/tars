@@ -234,6 +234,28 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   fixture.state.close()
 })
 
+test("an approved lane ignores dispatched pre-approval responses when validating a new reopen", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/completed-response.md",
+    `id: completed-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\niteration: 1\nhead_commit: abc123`,
+  )
+  fixture.state.markDispatched(fixture.worktree, "implementation:completed-response:abc123")
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/pr-feedback-response.md",
+    `id: pr-feedback-response\ntype: implementation-response\nworkflow_id: fix\nround: 2\niteration: 1\nreopen: true\nhead_commit: def456`,
+  )
+
+  const result = await fixture.coordinator.processAll()
+
+  assert.equal(result[0].action, "sent:codex")
+  assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
+  fixture.state.close()
+})
+
 test("an approved lane surfaces a missing reopen flag until the author corrects it", async () => {
   const fixture = await laneFixture()
   fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })

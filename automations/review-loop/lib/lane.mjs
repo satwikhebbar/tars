@@ -63,7 +63,9 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
-    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : [])],
+    // tars-plan is an OpenCode agent. Other harnesses still receive the
+    // role-level planning prompt, but must not be passed OpenCode CLI flags.
+    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : [])],
   })
   const worktreePath = author.path
   const group = groupForWorktree(worktreePath)
@@ -140,9 +142,17 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
     await assertStoppedDeadSessions(aoe, [lane.authorSessionId, lane.reviewerSessionId])
   }
 
-  if (author && reviewer) await aoe.removeSession(reviewer.id)
+  // TARS owns both sessions. Purge instead of leaving linked worktrees in
+  // AoE's trash, which would keep the lane branch checked out and prevent a
+  // future retry with the same issue/branch name.
+  if (author && reviewer) await aoe.removeSession(reviewer.id, { purge: true })
   const finalSession = author ?? reviewer
-  await aoe.removeSession(finalSession.id, { deleteWorktree: true, deleteBranch: true })
+  await aoe.removeSession(finalSession.id, {
+    deleteWorktree: true,
+    deleteBranch: true,
+    force,
+    purge: true,
+  })
   await aoe.deleteGroup(groupForWorktree(worktreePath))
   state.deleteLane(worktreePath)
   return lane
