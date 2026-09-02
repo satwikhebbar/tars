@@ -263,7 +263,7 @@ function printUsage() {
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
-  tars lane set-max-rounds --worktree <path> --max-rounds <number> [--review-budget <number>] [--resume]
+  tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   tars status`)
