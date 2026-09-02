@@ -18,6 +18,38 @@ test("an approved lane with no reopen event needs no action", async () => {
   fixture.state.close()
 })
 
+test("a completed reopened lane ignores journaled deliveries across plan and iteration workflow ids", async () => {
+  const fixture = await laneFixture({ state: "approved", iterationCount: 3, currentIteration: 3 })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "done/plan-verdict.md",
+    `id: fix-plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 10\nround: 1\noutcome: approved\niteration_count: 3\nresponds_to: fix-plan`,
+  )
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "done/implementation-2.md",
+    `id: fix-r2-response\ntype: implementation-response\nworkflow_id: 10.0\nround: 2\niteration: 1\nhead_commit: abc123`,
+  )
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/reopened-implementation.md",
+    `id: fix-r8-response\ntype: implementation-response\nworkflow_id: 10.0\nround: 8\niteration: 3\nreopen: true\nhead_commit: def456`,
+  )
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/reopened-review.md",
+    `id: fix-r8-review\ntype: code-review\ncreated_by: reviewer\nworkflow_id: 10.0\nround: 8\niteration: 3\noutcome: approved\nresponds_to: fix-r8-response`,
+  )
+  fixture.state.markDispatched(fixture.worktree, "plan-verdict:fix-plan-verdict:approved")
+  fixture.state.markDispatched(fixture.worktree, "implementation:fix-r8-response:def456")
+  fixture.state.markDispatched(fixture.worktree, "review:fix-r8-review:approved")
+
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "no_action")
+  assert.match(analysis.reasons[0], /delivery complete/)
+  fixture.state.close()
+})
+
 test("a blocked lane stays blocked and cannot be dispatched", async () => {
   const fixture = await laneFixture({ state: "blocked" })
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })

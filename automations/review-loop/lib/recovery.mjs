@@ -53,7 +53,12 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     return finish("blocked", "lane holds an invalid handoff; remove or fix it in the queue before resuming")
   }
   if (lane.state === "blocked") return finish("blocked", "lane state is blocked")
-  if (lane.state === "approved" && !events.some((event) => event.reopensLane)) {
+  if (
+    lane.state === "approved" &&
+    !events.some(
+      (event) => event.reopensLane && (!dispatched.has(event.key) || !hasAdvancement(allHandoffs, event)),
+    )
+  ) {
     return finish("no_action", "delivery complete: approved lane has no pending reopen")
   }
 
@@ -297,8 +302,23 @@ function hasAdvancement(handoffs, event) {
     const metadata = handoff.metadata
     if (metadata.id === id) return false
     if (metadata.responds_to === id) return true
-    return metadata.workflow_id === workflow_id && Number.isInteger(metadata.round) && metadata.round > event.round
+    return sameWorkflow(metadata.workflow_id, workflow_id) && Number.isInteger(metadata.round) && metadata.round > event.round
   })
+}
+
+/**
+ * A plan verdict commonly uses the issue number (for example, `10`), while
+ * its implementation iterations use a decimal workflow id (`10.0`). They
+ * are one workflow for advancement purposes, not separate lanes.
+ */
+function sameWorkflow(left, right) {
+  const normalizedLeft = String(left ?? "").trim()
+  const normalizedRight = String(right ?? "").trim()
+  if (!normalizedLeft || !normalizedRight) return false
+  if (normalizedLeft === normalizedRight) return true
+  const numericLeft = Number(normalizedLeft)
+  const numericRight = Number(normalizedRight)
+  return Number.isFinite(numericLeft) && Number.isFinite(numericRight) && numericLeft === numericRight
 }
 
 async function readAllHandoffs(worktreePath) {
