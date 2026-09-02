@@ -189,6 +189,25 @@ export class StateStore {
       .run(worktreePath, eventKey, new Date().toISOString())
   }
 
+  /**
+   * Atomically journals an event as dispatched and persists the accompanying
+   * lane update. The dispatch marker and the lane save (for example the
+   * review-budget unit consumed by a `changes_requested` dispatch) commit
+   * together or roll back together, so recovery can never observe an event
+   * journaled as dispatched without the lane state its dispatch recorded.
+   */
+  dispatch(worktreePath, eventKey, lane) {
+    this.database.exec("BEGIN IMMEDIATE")
+    try {
+      this.markDispatched(worktreePath, eventKey)
+      this.saveLane(lane)
+      this.database.exec("COMMIT")
+    } catch (error) {
+      this.database.exec("ROLLBACK")
+      throw error
+    }
+  }
+
   /** Returns dispatched event keys and their recorded delivery timestamps. */
   dispatchedEvents(worktreePath) {
     const rows = this.database

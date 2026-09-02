@@ -164,8 +164,7 @@ export class ReviewLoopCoordinator {
         event.outcome === "changes_requested" &&
         Number.isInteger(lane.reviewBudget)
       await this.aoe.send(sessionId, authorPrompt(lane, event))
-      this.state.markDispatched(lane.worktreePath, event.key)
-      this.state.saveLane({
+      this.state.dispatch(lane.worktreePath, event.key, {
         ...lane,
         state: event.destination === "reviewer" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
         phase: event.reopensLane ? "post_pr_feedback" : lane.phase,

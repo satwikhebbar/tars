@@ -32,13 +32,15 @@ persisted review budget for the implementation phase.</p>
 <h2>Problem details</h2>
 <ul>
   <li><code>ReviewLoopCoordinator.dispatchLane</code> (automations/review-loop/lib/coordinator.mjs, line ~105) blocks the lane whenever
-  <code>event.round &gt; lane.maxRounds</code> (default 5). <code>round</code> increments on <em>every</em> handoff in the workflow:
-  plan-review request, plan-review verdict, each plan revision, each <code>implementation-response</code>, and each
-  <code>code-review</code>.</li>
-  <li>A plan-first lane with <code>iteration_count: 3</code> publishes six mandatory handoffs before any feedback
-  (verdict + 3 responses + 3 reviews), plus the plan-review handoff itself — <code>round</code> reaches 7 with zero
-  <code>changes_requested</code>. The lane blocks as <code>blocked</code> (reason <code>max_rounds</code>) even though the
-  reviewer never asked for a retry. This is the core defect.</li>
+  <code>event.round &gt; lane.maxRounds</code> (default 5). Only author-authored handoffs advance <code>round</code> — the
+  plan-review request and each <code>implementation-response</code> — while reviewer verdicts and code reviews preserve the
+  round of the handoff they respond to. Because the cap is enforced against the whole workflow, it cannot tell a requested
+  retry from ordinary iteration structure.</li>
+  <li>A plan-first lane that needs two planning revisions and then runs all three approved iterations publishes author
+  handoffs at rounds 2 through 6 (initial plan-review at 1; revised plan-review requests at 2 and 3; the three
+  implementation responses at 4, 5, and 6). With no implementation-phase <code>changes_requested</code>, <code>round</code>
+  reaches 6 and the default cap of 5 blocks the lane as <code>blocked</code> (reason <code>max_rounds</code>) mid-iteration
+  even though the reviewer never asked for an implementation retry. This is the core defect.</li>
   <li><code>lib/recovery.mjs</code> mirrors the same round-based check (<code>analyzeLane</code> overLimit/pending/unconfirmed),
   so <code>lane resume</code> reports the same premature <code>blocked</code> verdict.</li>
   <li>Operator recovery today is <code>tars lane set-max-rounds --max-rounds &lt;n&gt; --resume</code> — a round-based

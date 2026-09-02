@@ -267,10 +267,11 @@ Once a plan is approved, `round` is ordering/correlation metadata only and never
 caps implementation work. Each implementation-phase `code-review` with
 `outcome: changes_requested` consumes exactly one unit of the budget at the
 moment TARS dispatches it to the author; planned iterations, approvals, and
-implementation responses never consume it, and a `blocked` verdict never blocks
-the lane. When the budget is exhausted, a new `changes_requested` blocks the
-lane with reason `review_budget` (surfaced by `lane resume`). Direct-build lanes
-and the pre-approval planning phase stay bounded by `max_rounds`.
+implementation responses never consume it. A `blocked` verdict stops the lane
+without consuming the budget. When the budget is exhausted, a new
+`changes_requested` blocks the lane with reason `review_budget` (surfaced by
+`lane resume`). Direct-build lanes and the pre-approval planning phase stay
+bounded by `max_rounds`.
 
 To recover an exhausted budget, raise it and resume the lane; the consumed
 counter is never reset:
