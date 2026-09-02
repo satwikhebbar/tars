@@ -48,6 +48,47 @@ test("round-trips the review budget and consumed counter separately from max_rou
   state.close()
 })
 
+test("journals a dispatch and its lane update atomically", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
+  const state = new StateStore(join(directory, "state.sqlite"))
+  await state.open()
+  const lane = {
+    worktreePath: "/budgeted", authorSessionId: "claude-author", reviewerSessionId: "cursor-reviewer",
+    authorHarness: "claude", reviewerHarness: "cursor", authorTool: "claude", reviewerTool: "cursor",
+    state: "implementing", maxRounds: 5, planning: "required", phase: "building",
+    iterationCount: 1, currentIteration: 1, reviewBudget: 2, reviewBudgetConsumed: 0,
+  }
+  state.saveLane(lane)
+  state.dispatch(lane.worktreePath, "review:r2:changes_requested", { ...lane, reviewBudgetConsumed: 1 })
+  assert.equal(state.hasDispatched(lane.worktreePath, "review:r2:changes_requested"), true)
+  assert.equal(state.lane(lane.worktreePath).reviewBudgetConsumed, 1)
+  state.close()
+})
+
+test("rolls back the dispatch marker when the lane update fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
+  const state = new StateStore(join(directory, "state.sqlite"))
+  await state.open()
+  const lane = {
+    worktreePath: "/budgeted", authorSessionId: "claude-author", reviewerSessionId: "cursor-reviewer",
+    authorHarness: "claude", reviewerHarness: "cursor", authorTool: "claude", reviewerTool: "cursor",
+    state: "implementing", maxRounds: 5, planning: "required", phase: "building",
+    iterationCount: 1, currentIteration: 1, reviewBudget: 2, reviewBudgetConsumed: 0,
+  }
+  state.saveLane(lane)
+  const failing = Object.create(state)
+  failing.saveLane = () => {
+    throw new Error("simulated disk failure")
+  }
+  assert.throws(
+    () => failing.dispatch(lane.worktreePath, "review:r2:changes_requested", { ...lane, reviewBudgetConsumed: 1 }),
+    /simulated disk failure/,
+  )
+  assert.equal(state.hasDispatched(lane.worktreePath, "review:r2:changes_requested"), false)
+  assert.equal(state.lane(lane.worktreePath).reviewBudgetConsumed, 0)
+  state.close()
+})
+
 test("migrates a pre-existing lanes table to add the review budget columns", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
   const path = join(directory, "state.sqlite")
