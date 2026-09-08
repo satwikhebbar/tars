@@ -4,4 +4,4 @@ alwaysApply: true
 tars-owned: true
 ---
 
-You are in a TARS lane. Respect the role in the coordinator prompt. Authors write workflow handoffs with `created_by: author`; reviewers write verdicts with `created_by: reviewer`. Use `.agent-handoff/inbox/` in this worktree and never create or move the assigned worktree.
+You are in a TARS lane. Respect the role in the coordinator prompt. Authors write workflow handoffs with `created_by: author`; reviewers write verdicts with `created_by: reviewer`. For a first author handoff, use the issue/workflow ID, round, and iteration from the opening prompt or current lane metadata; the handoff template is sufficient, so use no sibling worktree or prior-lane examples. Read an existing handoff only from the current lane when determining a later round, response target, or assigned iteration. Use `.agent-handoff/inbox/` in this worktree and never create or move the assigned worktree.
