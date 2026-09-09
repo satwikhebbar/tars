@@ -363,9 +363,9 @@ function promptFor(lane, event) {
   }
   if (event.destination === "terminal" && event.outcome === "approved") {
     if (lane.phase === "post_pr_feedback") {
-      return `Review-loop: the follow-up handoff review is approved. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote so the existing pull request is updated. Report the remote branch and existing PR URL when finished. Do not create another pull request or make implementation changes unless needed to resolve a push blocker.`
+      return `Review-loop: the follow-up handoff review is approved. Push the approved branch to its configured remote so the existing pull request is updated. Report the remote branch and existing PR URL when finished. Do not create another handoff, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push blocker.`
     }
-    return `Review-loop: the handoff review is approved and complete. Read ${path}, record the approved review using the handoff-review protocol, then push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not make implementation changes unless needed to resolve a push or PR blocker.`
+    return `Review-loop: the handoff review is approved and complete. Push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not create another handoff, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push or PR blocker.`
   }
   if (event.destination === "author" && event.reviewKind === "plan") {
     if (event.outcome === "approved") {

@@ -162,6 +162,8 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
   assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
+  assert.match(fixture.aoe.sent.at(-1).message, /do not create another handoff.*inspect TARS internals/i)
   assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 2)
   assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 0)
   fixture.state.close()
@@ -282,6 +284,7 @@ test("changes requested wakes OpenCode and approval tells OpenCode to push and o
   )
   assert.match(fixture.aoe.sent[1].message, /push the approved branch/i)
   assert.match(fixture.aoe.sent[1].message, /create a pull request/i)
+  assert.doesNotMatch(fixture.aoe.sent[1].message, /record the approved review|read .*code-review/i)
   fixture.state.close()
 })
 
@@ -323,6 +326,7 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
   fixture.state.close()
 })
 
