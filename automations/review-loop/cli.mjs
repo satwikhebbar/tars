@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
-import { assertHarnessAvailable, loadHarnessConfig, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
@@ -145,6 +145,7 @@ async function launch({ values, state, config }) {
     planModel: values["plan-model"], roles,
     provision: async (worktreePath) => {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
+      await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
     },
     openingPrompt: values.prompt ?? (planning === "required" ? planOpeningPrompt(issue) : issueOpeningPrompt(issue)),
   })

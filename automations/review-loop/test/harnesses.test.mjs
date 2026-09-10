@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
-import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 const execFileAsync = promisify(execFile)
@@ -13,13 +13,36 @@ const execFileAsync = promisify(execFile)
 test("normalizes defaults and resolves custom AoE-backed harnesses", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tars-config-"))
   const path = join(directory, "config.json")
-  assert.deepEqual(await loadHarnessConfig(path), { defaults: { author: "opencode", reviewer: "codex" }, harnesses: {} })
+  assert.deepEqual(await loadHarnessConfig(path), { defaults: { author: "opencode", reviewer: "codex" }, harnesses: {}, worktreeFiles: [] })
   await saveHarnessConfig({ defaults: { author: "claude", reviewer: "cursor" }, harnesses: { pi: { tool: "pi", displayName: "Pi" } } }, path)
   const config = await loadHarnessConfig(path)
   assert.equal(resolveHarness(config, "pi").tool, "pi")
   assert.equal(resolveHarness(config, "claude").displayName, "Claude Code")
   assert.deepEqual(resolveHarness(config, "codex").launchArgs, ["--approve-for-me"])
   assert.throws(() => resolveHarness(config, "missing"), /Unknown TARS harness/)
+})
+
+test("copies configured files from the source repository into a lane worktree", async () => {
+  const source = await mkdtemp(join(tmpdir(), "tars-source-"))
+  const worktree = await mkdtemp(join(tmpdir(), "tars-worktree-"))
+  await mkdir(join(source, "config"), { recursive: true })
+  await writeFile(join(source, "config", "local.json"), "local config\n")
+
+  await provisionConfiguredWorktreeFiles({
+    config: { worktreeFiles: [{ source: "config/local.json", destination: "config/local.json" }, ".env.local"] },
+    repoPath: source,
+    worktreePath: worktree,
+  }).catch((error) => {
+    assert.match(error.message, /ENOENT/)
+  })
+  assert.equal(await readFile(join(worktree, "config", "local.json"), "utf8"), "local config\n")
+})
+
+test("rejects configured worktree files that escape either root", async () => {
+  await assert.rejects(
+    () => provisionConfiguredWorktreeFiles({ config: { worktreeFiles: ["../secret"] }, repoPath: "/repo", worktreePath: "/worktree" }),
+    /escapes its root/,
+  )
 })
 
 test("parses AoE's checkmark inventory and rejects unavailable selected harnesses", async () => {

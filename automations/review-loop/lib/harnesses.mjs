@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { mkdir, readFile, writeFile, access, chmod, cp, lstat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
@@ -35,6 +35,7 @@ export function normalizeConfig(config = {}) {
   return {
     defaults: { author: config.defaults?.author ?? "opencode", reviewer: config.defaults?.reviewer ?? "codex" },
     harnesses: config.harnesses ?? {},
+    worktreeFiles: Array.isArray(config.worktreeFiles) ? config.worktreeFiles : [],
   }
 }
 
@@ -92,6 +93,20 @@ export async function provisionHarnessSkills({ root, harness, worktreePath, forc
 export async function provisionWorktreeHarnessRequirements({ root, harness, worktreePath, force = false }) {
   if (harness.key !== "cursor") return
   await provisionHarnessSkills({ root, harness, worktreePath, force })
+}
+
+/** Copies configured repository-local files into a newly created lane worktree. */
+export async function provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath }) {
+  for (const entry of config.worktreeFiles) {
+    const { source, destination = source } = typeof entry === "string" ? { source: entry } : entry ?? {}
+    if (typeof source !== "string" || typeof destination !== "string" || !source || !destination) {
+      throw new Error("Each TARS worktreeFiles entry must be a path or an object with source and destination paths.")
+    }
+    const sourcePath = safeRelativePath(repoPath, source, "source")
+    const destinationPath = safeRelativePath(worktreePath, destination, "destination")
+    await mkdir(dirname(destinationPath), { recursive: true })
+    await cp(sourcePath, destinationPath, { recursive: true, force: true })
+  }
 }
 
 export async function provisionOpenCodeCommand(root, force = false) {
@@ -172,4 +187,12 @@ async function installOwnedText(contents, destination, force) {
 
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`
+}
+
+function safeRelativePath(root, path, label) {
+  if (isAbsolute(path)) throw new Error(`TARS worktreeFiles ${label} path must be relative: ${path}`)
+  const resolved = resolve(root, path)
+  const escape = relative(root, resolved).startsWith("..")
+  if (escape) throw new Error(`TARS worktreeFiles ${label} path escapes its root: ${path}`)
+  return resolved
 }
