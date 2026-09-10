@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
-import { assertHarnessAvailable, loadHarnessConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
@@ -60,11 +60,10 @@ async function main() {
   const state = new StateStore(values.state ?? defaultStatePath())
   await state.open()
   try {
-    const config = await loadHarnessConfig(values.config)
-    if (command === "start") await start({ values, state, config })
+    if (command === "start") await start({ values, state, config: await loadHarnessConfig(values.config) })
     else if (command === "watch") await watch({ values, state })
-    else if (command === "lane" && positionals[1] === "register") await register({ values, state, config })
-    else if (command === "lane" && positionals[1] === "start") await launch({ values, state, config })
+    else if (command === "lane" && positionals[1] === "register") await register({ values, state, config: await loadHarnessConfig(values.config) })
+    else if (command === "lane" && positionals[1] === "start") await launch({ values, state })
     else if (command === "lane" && positionals[1] === "close") await close({ values, state })
     else if (command === "lane" && positionals[1] === "set-max-rounds") await setMaxRounds({ values, state })
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
@@ -118,10 +117,11 @@ async function register({ values, state, config }) {
   console.log(`registered: ${worktreePath}\t${pair.authorSessionId}\t${pair.reviewerSessionId}`)
 }
 
-async function launch({ values, state, config }) {
+async function launch({ values, state }) {
   if (!values.repo || !values.issue) throw new Error("lane start requires --repo <path> and --issue <number>")
   const issueNumber = positiveInteger(values.issue, undefined, "--issue")
   const repoPath = await realpath(values.repo)
+  const config = await loadLaneConfig({ repoPath, configPath: values.config })
   const issue = await readIssue(repoPath, issueNumber)
   const roles = rolesFor(values, config)
   if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")

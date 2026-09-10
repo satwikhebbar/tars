@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
-import { assertHarnessAvailable, loadHarnessConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 const execFileAsync = promisify(execFile)
@@ -36,6 +36,27 @@ test("copies configured files from the source repository into a lane worktree", 
     assert.match(error.message, /ENOENT/)
   })
   assert.equal(await readFile(join(worktree, "config", "local.json"), "utf8"), "local config\n")
+})
+
+test("uses repository-local lane configuration over device defaults", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "tars-project-config-"))
+  const configPath = join(repo, ".tars", "config.json")
+  await mkdir(join(repo, ".tars"), { recursive: true })
+  await writeFile(configPath, JSON.stringify({ worktreeFiles: [".dev.vars"], defaults: { author: "claude" } }))
+
+  const originalXdg = process.env.XDG_CONFIG_HOME
+  const configHome = await mkdtemp(join(tmpdir(), "tars-global-config-"))
+  process.env.XDG_CONFIG_HOME = configHome
+  try {
+    await saveHarnessConfig({ defaults: { author: "opencode", reviewer: "codex" }, worktreeFiles: [".env.local"] })
+    const config = await loadLaneConfig({ repoPath: repo })
+    assert.deepEqual(config.worktreeFiles, [".dev.vars"])
+    assert.equal(config.defaults.author, "claude")
+    assert.equal(config.defaults.reviewer, "codex")
+  } finally {
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = originalXdg
+  }
 })
 
 test("rejects configured worktree files that escape either root", async () => {

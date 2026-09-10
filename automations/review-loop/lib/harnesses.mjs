@@ -17,11 +17,28 @@ export function defaultConfigPath() {
 }
 
 export async function loadHarnessConfig(path = defaultConfigPath()) {
+  return normalizeConfig(await readConfig(path))
+}
+
+/** Loads device defaults plus a repository's lane-specific configuration. */
+export async function loadLaneConfig({ repoPath, configPath }) {
+  if (configPath) return loadHarnessConfig(configPath)
+  const global = await loadHarnessConfig()
+  const project = await readConfig(join(repoPath, ".tars", "config.json"))
+  return normalizeConfig({
+    ...global,
+    ...project,
+    defaults: { ...global.defaults, ...project.defaults },
+    harnesses: { ...global.harnesses, ...project.harnesses },
+    worktreeFiles: project.worktreeFiles ?? global.worktreeFiles,
+  })
+}
+
+async function readConfig(path) {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8"))
-    return normalizeConfig(parsed)
+    return JSON.parse(await readFile(path, "utf8"))
   } catch (error) {
-    if (error?.code === "ENOENT") return normalizeConfig({})
+    if (error?.code === "ENOENT") return {}
     throw new Error(`Cannot read TARS config ${path}: ${error.message}`)
   }
 }

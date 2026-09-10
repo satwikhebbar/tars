@@ -83,9 +83,10 @@ update; an already-running agent may still have its earlier skill instructions
 in context.
 
 Lane creation can also copy project-local files from the source repository into
-each new worktree. Add a `worktreeFiles` array to `~/.config/tars/config.json`;
-paths are relative to the `--repo` root and the worktree respectively. A string
-uses the same relative path for both sides, while an object can rename it:
+each new worktree. Add a `worktreeFiles` array to
+`<repository>/.tars/config.json`; paths are relative to the `--repo` root and
+the worktree respectively. A string uses the same relative path for both sides,
+while an object can rename it:
 
 ```json
 {
@@ -96,9 +97,12 @@ uses the same relative path for both sides, while an object can rename it:
 }
 ```
 
-TARS copies these entries after AoE creates the worktree and before the author
+TARS merges this repository-local configuration with device defaults from
+`~/.config/tars/config.json`, with repository values taking precedence. TARS
+copies these entries after AoE creates the worktree and before the author
 session receives its opening prompt. Source entries must exist; absolute paths
-and paths that escape either root are rejected.
+and paths that escape either root are rejected. Keep `.tars/` ignored when the
+configuration names local secrets or machine-specific paths.
 
 ### OpenCode planning agent
 
