@@ -1,10 +1,11 @@
 const DIRECTIVE = "TARS_LANE_PREFLIGHT="
 
 /** Selects a lane name and planning path using an LLM suggestion only when it validates. */
-export async function chooseLanePreflight(issue, runNamer) {
+export async function chooseLanePreflight(issue, runNamer, { onFallback } = {}) {
   try {
     return parsePreflightDirective(await runNamer(namerPrompt(issue)))
-  } catch {
+  } catch (error) {
+    onFallback?.(error)
     return fallbackLanePreflight(issue)
   }
 }
@@ -13,8 +14,12 @@ export async function chooseLanePreflight(issue, runNamer) {
 export function parsePreflightDirective(output) {
   const directives = output
     .split(/\r?\n/)
-    .filter((line) => line.startsWith(DIRECTIVE))
-    .map((line) => line.slice(DIRECTIVE.length))
+    // OpenCode may render the machine-readable line as Markdown and escape
+    // underscores. Those escapes are presentation-only, so normalize them
+    // before applying the exact directive and JSON validation.
+    .map((line) => line.replaceAll("\\_", "_"))
+    .filter((line) => line.trim().startsWith(DIRECTIVE))
+    .map((line) => extractDirectiveJson(line.trim().slice(DIRECTIVE.length)))
   if (directives.length !== 1) throw new Error("Expected exactly one TARS_LANE_PREFLIGHT directive.")
   const value = JSON.parse(directives[0])
   if (
@@ -28,6 +33,27 @@ export function parsePreflightDirective(output) {
     throw new Error("Preflight returned invalid lane settings.")
   }
   return { branch: value.branch, worktreeName: value.worktree_name, planning: value.planning }
+}
+
+function extractDirectiveJson(value) {
+  const start = value.indexOf("{")
+  if (start < 0) throw new Error("Preflight directive is missing its JSON object.")
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === "\\") escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"') inString = true
+    else if (character === "{") depth += 1
+    else if (character === "}" && --depth === 0) return value.slice(start, index + 1)
+  }
+  throw new Error("Preflight directive has incomplete JSON.")
 }
 
 export function fallbackLanePreflight(issue) {

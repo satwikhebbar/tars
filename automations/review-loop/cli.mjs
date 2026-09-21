@@ -129,8 +129,16 @@ async function launch({ values, state }) {
   if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")
   await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
   const fallback = fallbackLanePreflight(issue)
-  const preflight = values.planning === "always" || values.planning === "never" ? fallback : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt).catch(() => ""))
+  let planningReason = null
+  const explicitPlanning = values.planning === "always" || values.planning === "never"
+  const preflight = explicitPlanning
+    ? fallback
+    : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt), {
+      onFallback: (error) => { planningReason = summarizePreflightError(error) },
+    })
   const planning = resolvePlanning(values.planning, preflight.planning)
+  const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
+  console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
   const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
   const planModel = values["plan-model"] ?? (planning === "required" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
@@ -147,6 +155,8 @@ async function launch({ values, state }) {
     worktreeName: values["worktree-name"] ?? names.worktreeName,
     maxRounds,
     planning,
+    planningSource,
+    planningReason,
     authorModel, reviewerModel, planModel, roles,
     provision: async (worktreePath) => {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
@@ -234,7 +244,7 @@ async function selectPair(aoe, worktreePath, values, roles) {
 
 function printStatus(state) {
   for (const lane of state.lanes())
-    console.log(`${lane.worktreePath}\t${lane.state}\t${lane.authorHarness}\t${lane.authorSessionId}\t${lane.reviewerHarness}\t${lane.reviewerSessionId}`)
+    console.log(`${lane.worktreePath}\t${lane.state}\t${lane.planning}\t${lane.planningSource}\t${lane.planningReason ?? "-"}\t${lane.authorHarness}\t${lane.authorSessionId}\t${lane.reviewerHarness}\t${lane.reviewerSessionId}`)
 }
 
 function defaultStatePath() {
@@ -301,6 +311,14 @@ function resolvePlanning(value, suggested) {
   if (value === "always") return "required"
   if (value === "never") return "not_required"
   throw new Error("--planning must be auto, always, or never")
+}
+
+function summarizePreflightError(error) {
+  let detail = error?.stderr?.trim() || error?.stdout?.trim() || error?.message || String(error)
+  // Node's execFile error message repeats the entire command before the
+  // useful subprocess output. Prefer the latter even when stderr is absent.
+  if (detail.startsWith("Command failed:") && detail.includes("\n")) detail = detail.slice(detail.indexOf("\n") + 1)
+  return detail.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\s+/g, " ").slice(0, 500)
 }
 
 async function findWorktreeSession(client, repoPath, branch, tool) {

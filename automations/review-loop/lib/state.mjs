@@ -25,6 +25,8 @@ export class StateStore {
         state TEXT NOT NULL,
         max_rounds INTEGER NOT NULL,
         planning TEXT NOT NULL DEFAULT 'not_required',
+        planning_source TEXT NOT NULL DEFAULT 'legacy',
+        planning_reason TEXT,
         phase TEXT NOT NULL DEFAULT 'building',
         plan_model TEXT,
         author_model TEXT,
@@ -62,6 +64,8 @@ export class StateStore {
     `)
     for (const column of [
       "planning TEXT NOT NULL DEFAULT 'not_required'",
+      "planning_source TEXT NOT NULL DEFAULT 'legacy'",
+      "planning_reason TEXT",
       "phase TEXT NOT NULL DEFAULT 'building'",
       "plan_model TEXT",
       "author_model TEXT",
@@ -110,8 +114,8 @@ export class StateStore {
     const authorTool = lane.authorTool ?? "opencode"
     const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, author_model, reviewer_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
-        VALUES (${Array(28).fill("?").join(", ")})
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, planning_source, planning_reason, phase, plan_model, author_model, reviewer_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
+        VALUES (${Array(30).fill("?").join(", ")})
         ON CONFLICT(worktree_path) DO UPDATE SET
           author_session_id = excluded.author_session_id,
           reviewer_session_id = excluded.reviewer_session_id,
@@ -122,6 +126,8 @@ export class StateStore {
           state = excluded.state,
           max_rounds = excluded.max_rounds,
           planning = excluded.planning,
+          planning_source = excluded.planning_source,
+          planning_reason = excluded.planning_reason,
           phase = excluded.phase,
           plan_model = excluded.plan_model,
           author_model = excluded.author_model,
@@ -151,6 +157,8 @@ export class StateStore {
         lane.state,
         lane.maxRounds,
         lane.planning ?? "not_required",
+        lane.planningSource ?? "legacy",
+        lane.planningReason ?? null,
         lane.phase ?? "building",
         lane.planModel ?? null,
         lane.authorModel ?? null,
@@ -297,6 +305,8 @@ function toLane(row) {
     state: row.state,
     maxRounds: row.max_rounds,
     planning: row.planning,
+    planningSource: row.planning_source,
+    planningReason: row.planning_reason,
     phase: row.phase,
     planModel: row.plan_model,
     authorModel: row.author_model,

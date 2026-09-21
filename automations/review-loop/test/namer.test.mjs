@@ -11,6 +11,13 @@ test("accepts one valid preflight directive amid unrelated output", () => {
   assert.deepEqual(value, { branch: "enhance/calendar-export", worktreeName: "calendar-export", planning: "not_required" })
 })
 
+test("accepts a Markdown-escaped preflight directive", () => {
+  const value = parsePreflightDirective(
+    'TARS\\_LANE\\_PREFLIGHT={"branch":"issue/44-one","worktree\\_name":"issue-44-one","planning":"not_required"} trailing model text',
+  )
+  assert.deepEqual(value, { branch: "issue/44-one", worktreeName: "issue-44-one", planning: "not_required" })
+})
+
 test("rejects ambiguous, unsafe, or incomplete preflight directives", () => {
   assert.throws(
     () => parsePreflightDirective('TARS_LANE_PREFLIGHT={"branch":"bad name","worktree_name":"bad-name","planning":"required"}'),
@@ -27,9 +34,19 @@ test("rejects ambiguous, unsafe, or incomplete preflight directives", () => {
 })
 
 test("falls back to a safe planning lane when the preflight output cannot be used", async () => {
-  const result = await chooseLanePreflight(ISSUE, async () => "a wall of text")
+  let fallbackError
+  const result = await chooseLanePreflight(ISSUE, async () => "a wall of text", { onFallback: (error) => { fallbackError = error } })
   assert.deepEqual(result, { branch: "issue/44-add-calendar-export", worktreeName: "issue-44-add-calendar-export", planning: "required" })
+  assert.match(fallbackError.message, /exactly one/)
   assert.deepEqual(fallbackLanePreflight(ISSUE), result)
+})
+
+test("reports preflight execution failures before falling back", async () => {
+  let fallbackError
+  const error = new Error("preflight unavailable")
+  const result = await chooseLanePreflight(ISSUE, async () => { throw error }, { onFallback: (received) => { fallbackError = received } })
+  assert.equal(fallbackError, error)
+  assert.equal(result.planning, "required")
 })
 
 test("uses a valid preflight result", async () => {

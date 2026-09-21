@@ -68,7 +68,7 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, authorModel, reviewerModel, planModel, roles, provision }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
@@ -97,6 +97,8 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     state: "watching",
     maxRounds,
     planning,
+    planningSource,
+    planningReason,
     phase: planning === "required" ? "planning" : "building",
     planModel: planModel ?? null,
     authorModel: authorModel ?? null,
