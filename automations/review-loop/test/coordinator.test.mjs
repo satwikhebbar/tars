@@ -327,6 +327,8 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
+  assert.match(fixture.aoe.sent.at(-1).message, /later asks you to address new feedback/i)
+  assert.match(fixture.aoe.sent.at(-1).message, /address-pr-feedback.*reopen: true/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
   fixture.state.close()
 })

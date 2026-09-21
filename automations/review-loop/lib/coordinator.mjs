@@ -374,9 +374,9 @@ function promptFor(lane, event) {
   }
   if (event.destination === "terminal" && event.outcome === "approved") {
     if (lane.phase === "post_pr_feedback") {
-      return `Review-loop: the follow-up handoff review is approved. Push the approved branch to its configured remote so the existing pull request is updated. Report the remote branch and existing PR URL when finished. Do not create another handoff, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push blocker.`
+      return `Review-loop: the follow-up handoff review is approved. Push the approved branch to its configured remote so the existing pull request is updated. Report the remote branch and existing PR URL when finished. Do not create another handoff for this current push task, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push blocker. If the user later asks you to address new feedback on this existing pull request, that is an explicit follow-up workflow: use address-pr-feedback and publish an implementation-response with reopen: true.`
     }
-    return `Review-loop: the handoff review is approved and complete. Push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not create another handoff, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push or PR blocker.`
+    return `Review-loop: the handoff review is approved and complete. Push the approved branch to its configured remote and create a pull request. Report the remote branch and PR URL when finished. Do not create another handoff for this current push/PR task, archive handoff files, inspect TARS internals, or make implementation changes unless needed to resolve a push or PR blocker. If the user later asks you to address feedback on this pull request, that is an explicit follow-up workflow: use address-pr-feedback and publish an implementation-response with reopen: true.`
   }
   if (event.destination === "author" && event.reviewKind === "plan") {
     if (event.outcome === "approved") {
