@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, parseTrashedSessionIds, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
+import { AoeClient, agentLabelFromCapture, createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, parseTrashedSessionIds, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
 
@@ -69,6 +69,17 @@ test("parses only AoE trash session IDs", () => {
   assert.deepEqual([...ids], ["e874feb8d3c44b59", "f8acc4ad5e1f4902"])
 })
 
+test("reads the selected OpenCode agent from the terminal footer", () => {
+  assert.equal(agentLabelFromCapture("old output\n  Tars-Plan · DeepSeek V4 Flash\n"), "tars-plan")
+  assert.equal(agentLabelFromCapture("old output\n  Build · DeepSeek V4 Flash\n"), "build")
+})
+
+test("cycles the live OpenCode session until the requested primary agent is visible", async () => {
+  const client = new SwitchAoe(["Tars-Plan · model", "Build · model"])
+  await client.switchAgent("session-1", "build", { pollIntervalMs: 0 })
+  assert.deepEqual(client.keys, ["Tab"])
+})
+
 function sessions() {
   return [
     { id: "open-1", path: WORKTREE, tool: "opencode" },
@@ -96,5 +107,21 @@ class CreateAoe extends ListAoe {
   async addSession(path, tool, title, options) {
     this.added.push({ path, tool, title, options })
     this.sessionList.push({ id: tool === "opencode" ? "new-open" : "new-codex", path, tool })
+  }
+}
+
+class SwitchAoe extends AoeClient {
+  constructor(footers) {
+    super()
+    this.footers = footers
+    this.keys = []
+  }
+
+  async captureSession() {
+    return { content: this.footers.shift() }
+  }
+
+  async sendKey(_sessionId, key) {
+    this.keys.push(key)
   }
 }
