@@ -114,7 +114,8 @@ export class ReviewLoopCoordinator {
           if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
           if (hasNextIteration(lane, event)) {
             const nextIteration = lane.currentIteration + 1
-            await this.aoe.send(
+            await this.sendAuthorPrompt(
+              lane,
               sessionId,
               iterationPrompt(lane, event.handoff.metadata.workflow_id, await planVerdictPathFor(lane), nextIteration, event.round + 1),
             )
@@ -123,7 +124,7 @@ export class ReviewLoopCoordinator {
             results.push({ event, action: `sent:author:iteration-${nextIteration}` })
             break
           }
-          await this.aoe.send(sessionId, buildPrompt(lane, promptFor(lane, event)))
+          await this.sendAuthorPrompt(lane, sessionId, promptFor(lane, event))
         }
         this.state.markDispatched(lane.worktreePath, event.key)
         this.state.saveLane({ ...lane, state: event.outcome })
@@ -163,7 +164,8 @@ export class ReviewLoopCoordinator {
         event.reviewKind === "code" &&
         event.outcome === "changes_requested" &&
         Number.isInteger(lane.reviewBudget)
-      await this.aoe.send(sessionId, authorPrompt(lane, event))
+      if (event.destination === "author") await this.sendAuthorPrompt(lane, sessionId, authorPrompt(lane, event))
+      else await this.aoe.send(sessionId, authorPrompt(lane, event))
       this.state.dispatch(lane.worktreePath, event.key, {
         ...lane,
         state: event.destination === "reviewer" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
@@ -186,7 +188,9 @@ export class ReviewLoopCoordinator {
     if (this.state.hasDispatched(lane.worktreePath, eventKey)) return null
     const planVerdictPath = await planVerdictPathFor(lane)
     const planVerdict = await readHandoff(planVerdictPath)
-    await this.aoe.send(
+    await this.aoe.switchAgent(lane.authorSessionId, "build")
+    await this.sendAuthorPrompt(
+      lane,
       lane.authorSessionId,
       iterationPrompt(lane, lane.transitionWorkflowId, planVerdictPath, lane.currentIteration, planVerdict.metadata.round + 1),
     )
@@ -200,6 +204,13 @@ export class ReviewLoopCoordinator {
       transitionRequestedAt: null,
     })
     return { event: { handoff: { metadata: { id: lane.transitionWorkflowId } } }, action: "sent:author:build" }
+  }
+
+  async sendAuthorPrompt(lane, sessionId, prompt) {
+    if (lane.authorHarness === "opencode" && lane.planning === "required" && ["building", "post_pr_feedback"].includes(lane.phase)) {
+      await this.aoe.switchAgent(sessionId, "build")
+    }
+    await this.aoe.send(sessionId, prompt)
   }
 }
 
@@ -377,14 +388,7 @@ function promptFor(lane, event) {
 }
 
 function authorPrompt(lane, event) {
-  const prompt = promptFor(lane, event)
-  return event.destination === "author" && event.reviewKind !== "plan" ? buildPrompt(lane, prompt) : prompt
-}
-
-/** Routes planned-lane implementation and publishing work back through OpenCode's Build agent. */
-function buildPrompt(lane, prompt, { force = false } = {}) {
-  if (lane.authorHarness === "opencode" && lane.planning === "required" && (force || ["building", "post_pr_feedback"].includes(lane.phase))) return `/tars-build ${prompt}`
-  return prompt
+  return promptFor(lane, event)
 }
 
 function iterationCountFor(metadata) {
@@ -416,6 +420,5 @@ function hasNextIteration(lane, event) {
 }
 
 function iterationPrompt(lane, workflowId, planVerdictPath, iteration, round) {
-  const prompt = `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}, and head_commit. Before publishing, run tars handoff validate --path <handoff-path>; correct every reported error. Do not start a later iteration, push, or create a pull request yet.`
-  return buildPrompt(lane, prompt, { force: true })
+  return `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}, and head_commit. Before publishing, run tars handoff validate --path <handoff-path>; correct every reported error. Do not start a later iteration, push, or create a pull request yet.`
 }
