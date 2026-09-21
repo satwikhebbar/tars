@@ -311,6 +311,20 @@ test("uses the selected harness launch arguments for author and reviewer session
   assert.deepEqual(aoe.reviewerExtraArgs, [])
 })
 
+test("passes resolved author and reviewer models to AoE and persists them", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  await startLane({
+    aoe, state, repoPath: "/repo", issue: { number: 10, title: "Models" },
+    branch: "issue/10-models", worktreeName: "issue-10-models", maxRounds: 5,
+    planning: "not_required", authorModel: "gpt-5.6-terra", reviewerModel: "gpt-5.6-astra", openingPrompt: "build",
+  })
+  assert.deepEqual(aoe.extraArgs, ["--model", "gpt-5.6-terra"])
+  assert.deepEqual(aoe.reviewerExtraArgs, ["--model", "gpt-5.6-astra"])
+  assert.equal(state.entries[0].authorModel, "gpt-5.6-terra")
+  assert.equal(state.entries[0].reviewerModel, "gpt-5.6-astra")
+})
+
 test("closes an approved lane through AoE before deleting its worktree", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()

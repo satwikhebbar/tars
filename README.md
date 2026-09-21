@@ -155,11 +155,35 @@ tars lane start \
   --repo /absolute/path/to/main-checkout \
   --issue 44 \
   --planning always \
-  --plan-model deepseek/deepseek-v4-pro
+  --plan-model deepseek/deepseek-flash
 ```
 
 Use a provider/model identifier understood by OpenCode, such as
-`deepseek/deepseek-v4-pro`.
+`deepseek/deepseek-flash`. TARS also accepts `--author-model` and
+`--reviewer-model` for per-lane overrides. To configure defaults, add role
+defaults under the selected harness in the global or repository `.tars/config.json`:
+
+```json
+{
+  "harnesses": {
+    "codex": {
+      "defaults": {
+        "author": { "model": "gpt-5.6-terra" },
+        "reviewer": { "model": "gpt-5.6-terra" }
+      }
+    },
+    "opencode": {
+      "defaults": {
+        "author": { "model": "<author-model>" },
+        "planning": { "model": "deepseek/deepseek-flash" }
+      }
+    }
+  }
+}
+```
+
+Repository configuration overrides global configuration, and explicit CLI
+model flags override both.
 
 TARS prints the worktree path, author session ID, reviewer session ID, and
 branch. Use AoE's normal tmux interface to observe either session; do not

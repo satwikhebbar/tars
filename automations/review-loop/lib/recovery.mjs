@@ -256,6 +256,7 @@ async function recreateMissingSessions({ aoe, state, lane }) {
   )
   if (!authorValid) {
     const author = await aoe.addSession(lane.worktreePath, lane.authorTool, `Review loop author resume (${suffix})`, {
+      extraArgs: recoveryModelArgs(lane, "author"),
       group,
     })
     updated.authorSessionId = author.id
@@ -266,12 +267,21 @@ async function recreateMissingSessions({ aoe, state, lane }) {
       lane.reviewerTool,
       `Review loop reviewer resume (${suffix})`,
       {
+        extraArgs: recoveryModelArgs(lane, "reviewer"),
         group,
       },
     )
     updated.reviewerSessionId = reviewer.id
   }
   state.saveLane(updated)
+}
+
+function recoveryModelArgs(lane, role) {
+  if (role === "reviewer") return lane.reviewerModel ? ["--model", lane.reviewerModel] : []
+  if (lane.phase === "planning" && lane.authorTool === "opencode") {
+    return ["--agent", "tars-plan", ...(lane.planModel ? ["--model", lane.planModel] : [])]
+  }
+  return lane.authorModel ? ["--model", lane.authorModel] : []
 }
 
 function sessionInfo(worktreePath, sessions, runtime, sessionId, tool) {

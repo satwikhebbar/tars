@@ -27,6 +27,8 @@ export class StateStore {
         planning TEXT NOT NULL DEFAULT 'not_required',
         phase TEXT NOT NULL DEFAULT 'building',
         plan_model TEXT,
+        author_model TEXT,
+        reviewer_model TEXT,
         transition_handoff_path TEXT,
         transition_workflow_id TEXT,
         transition_requested_at TEXT,
@@ -62,6 +64,8 @@ export class StateStore {
       "planning TEXT NOT NULL DEFAULT 'not_required'",
       "phase TEXT NOT NULL DEFAULT 'building'",
       "plan_model TEXT",
+      "author_model TEXT",
+      "reviewer_model TEXT",
       "transition_handoff_path TEXT",
       "transition_workflow_id TEXT",
       "transition_requested_at TEXT",
@@ -106,8 +110,8 @@ export class StateStore {
     const authorTool = lane.authorTool ?? "opencode"
     const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, phase, plan_model, author_model, reviewer_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
+        VALUES (${Array(28).fill("?").join(", ")})
         ON CONFLICT(worktree_path) DO UPDATE SET
           author_session_id = excluded.author_session_id,
           reviewer_session_id = excluded.reviewer_session_id,
@@ -120,6 +124,8 @@ export class StateStore {
           planning = excluded.planning,
           phase = excluded.phase,
           plan_model = excluded.plan_model,
+          author_model = excluded.author_model,
+          reviewer_model = excluded.reviewer_model,
           transition_handoff_path = excluded.transition_handoff_path,
           transition_workflow_id = excluded.transition_workflow_id,
           transition_requested_at = excluded.transition_requested_at,
@@ -147,6 +153,8 @@ export class StateStore {
         lane.planning ?? "not_required",
         lane.phase ?? "building",
         lane.planModel ?? null,
+        lane.authorModel ?? null,
+        lane.reviewerModel ?? null,
         lane.transitionHandoffPath ?? null,
         lane.transitionWorkflowId ?? null,
         lane.transitionRequestedAt ?? null,
@@ -291,6 +299,8 @@ function toLane(row) {
     planning: row.planning,
     phase: row.phase,
     planModel: row.plan_model,
+    authorModel: row.author_model,
+    reviewerModel: row.reviewer_model,
     transitionHandoffPath: row.transition_handoff_path,
     transitionWorkflowId: row.transition_workflow_id,
     transitionRequestedAt: row.transition_requested_at,
