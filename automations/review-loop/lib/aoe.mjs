@@ -7,8 +7,9 @@ const execFileAsync = promisify(execFile)
 
 /** Adapter around AoE's documented CLI, isolated for testability. */
 export class AoeClient {
-  constructor(command = "aoe") {
+  constructor(command = "aoe", tmuxCommand = "tmux") {
     this.command = command
+    this.tmuxCommand = tmuxCommand
   }
 
   async listSessions() {
@@ -36,6 +37,33 @@ export class AoeClient {
 
   async send(sessionId, message) {
     await execFileAsync(this.command, ["send", sessionId, message])
+  }
+
+  async switchAgent(sessionId, agent, { attempts = 8, pollIntervalMs = 250 } = {}) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const capture = await this.captureSession(sessionId)
+      if (agentLabelFromCapture(capture.content) === agent) return
+      await this.sendKey(sessionId, "Tab")
+      await delay(pollIntervalMs)
+    }
+    const capture = await this.captureSession(sessionId)
+    throw new Error(`OpenCode session ${sessionId} did not switch to the ${agent} agent (current: ${agentLabelFromCapture(capture.content) ?? "unknown"}).`)
+  }
+
+  async sendKey(sessionId, key) {
+    const { stdout } = await execFileAsync(this.tmuxCommand, [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}\t#{window_index}.#{pane_index}\t#{pane_current_command}",
+    ])
+    const suffix = `_${sessionId.slice(0, 8)}`
+    const pane = stdout
+      .split("\n")
+      .map((line) => line.split("\t"))
+      .find(([sessionName, , command]) => sessionName?.endsWith(suffix) && command === "opencode")
+    if (!pane) throw new Error(`Could not find the OpenCode tmux pane for AoE session ${sessionId}.`)
+    await execFileAsync(this.tmuxCommand, ["send-keys", "-t", `${pane[0]}:${pane[1]}`, key])
   }
 
   async removeSession(sessionId, { deleteWorktree = false, deleteBranch = false, force = false, purge = false } = {}) {
@@ -126,6 +154,12 @@ export class AoeClient {
       throw new Error(`Expected one newly-created ${tool} AoE session; found ${created.length}.`)
     return created[0]
   }
+}
+
+export function agentLabelFromCapture(content = "") {
+  const matches = [...content.matchAll(/(?:^|\n)\s*([A-Za-z][A-Za-z0-9-]*)\s+·\s+/g)]
+  const label = matches.at(-1)?.[1]
+  return label?.toLowerCase().replaceAll(" ", "-")
 }
 
 export function parseTrashedSessionIds(output) {

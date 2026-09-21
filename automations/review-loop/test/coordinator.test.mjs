@@ -104,7 +104,8 @@ test("plan approval compacts then starts Build mode without approving the lane",
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
   assert.equal(fixture.state.lane(fixture.worktree).phase, "building")
-  assert.match(fixture.aoe.sent[2].message, /^\/tars-build /)
+  assert.deepEqual(fixture.aoe.switched, [{ sessionId: "opencode-1", agent: "build" }])
+  assert.doesNotMatch(fixture.aoe.sent[2].message, /^\/tars-build /)
   assert.match(fixture.aoe.sent[2].message, /Continue the approved TARS plan/)
   assert.match(fixture.aoe.sent[2].message, /round 2/)
   assert.doesNotMatch(fixture.aoe.sent[2].message, /push the approved branch/i)
@@ -160,7 +161,7 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
-  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
   assert.match(fixture.aoe.sent.at(-1).message, /do not create another handoff.*inspect TARS internals/i)
@@ -299,7 +300,7 @@ test("planned-build changes requested re-enters OpenCode Build mode", async () =
 
   await fixture.coordinator.processAll()
   assert.equal(fixture.aoe.sent.at(-1).sessionId, "opencode-1")
-  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   fixture.state.close()
 })
 
@@ -323,7 +324,7 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
-  assert.match(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
+  assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
@@ -422,6 +423,7 @@ async function writeWorkflowHandoff(worktree, relativePath, frontmatter) {
 class FakeAoe {
   constructor() {
     this.sent = []
+    this.switched = []
   }
 
   async runningSessions() {
@@ -433,5 +435,9 @@ class FakeAoe {
 
   async send(sessionId, message) {
     this.sent.push({ sessionId, message })
+  }
+
+  async switchAgent(sessionId, agent) {
+    this.switched.push({ sessionId, agent })
   }
 }

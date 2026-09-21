@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, readFile, writeFile, access, chmod, cp, lstat } from "node:fs/promises"
+import { mkdir, readFile, writeFile, access, chmod, cp, lstat, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -153,12 +153,6 @@ export async function provisionConfiguredWorktreeFiles({ config, repoPath, workt
   }
 }
 
-export async function provisionOpenCodeCommand(root, force = false) {
-  const source = join(root, "commands", "opencode", "tars-build.md")
-  const destination = join(homedir(), ".config", "opencode", "commands", "tars-build.md")
-  await installOwnedFile(source, destination, force)
-}
-
 /** Installs the TARS controller command independently of a lane worktree. */
 export async function provisionTarsCli(root, force = false) {
   const runtime = join(homedir(), ".local", "share", "tars", "review-loop")
@@ -186,7 +180,7 @@ export async function provisionInstalledHarnesses({ root, installed, force = fal
   await Promise.all(harnesses.map((harness) => provisionHarnessSkills({ root, harness, force })))
   if (harnesses.some((harness) => harness.key === "opencode")) {
     await provisionOpenCodePlanAgent(root, force)
-    await provisionOpenCodeCommand(root, force)
+    await removeLegacyOpenCodeCommand()
   }
   return harnesses.map((harness) => harness.key)
 }
@@ -227,6 +221,16 @@ async function installOwnedText(contents, destination, force) {
   } catch (error) { if (error?.code !== "ENOENT") throw error }
   await mkdir(dirname(destination), { recursive: true })
   await writeFile(destination, contents, "utf8")
+}
+
+async function removeLegacyOpenCodeCommand() {
+  const destination = join(homedir(), ".config", "opencode", "commands", "tars-build.md")
+  try {
+    const contents = await readFile(destination, "utf8")
+    if (contents.includes("tars-owned: true")) await unlink(destination)
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error
+  }
 }
 
 function shellQuote(value) {

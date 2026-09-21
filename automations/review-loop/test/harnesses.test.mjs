@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
-import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodeCommand, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, resolveHarnessModel, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, resolveHarnessModel, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 const execFileAsync = promisify(execFile)
@@ -127,20 +127,6 @@ test("provisions TARS's writable-but-plan-scoped OpenCode agent", async () => {
   }
 })
 
-test("provisions a Build command that switches the primary OpenCode session", async () => {
-  const home = await mkdtemp(join(tmpdir(), "tars-opencode-home-"))
-  const originalHome = process.env.HOME
-  process.env.HOME = home
-  try {
-    await provisionOpenCodeCommand(ROOT)
-    const command = await readFile(join(home, ".config", "opencode", "commands", "tars-build.md"), "utf8")
-    assert.match(command, /^agent: build$/m)
-    assert.match(command, /^subtask: false$/m)
-  } finally {
-    process.env.HOME = originalHome
-  }
-})
-
 test("provisions a portable TARS controller command", async () => {
   const home = await mkdtemp(join(tmpdir(), "tars-cli-home-"))
   const originalHome = process.env.HOME
@@ -167,10 +153,12 @@ test("provisions all discovered supported harnesses independently of role defaul
   const originalHome = process.env.HOME
   process.env.HOME = home
   try {
+    await mkdir(join(home, ".config", "opencode", "commands"), { recursive: true })
+    await writeFile(join(home, ".config", "opencode", "commands", "tars-build.md"), "---\ntars-owned: true\n---\n")
     const provisioned = await provisionInstalledHarnesses({ root: ROOT, installed: new Set(["opencode", "codex", "cursor"]) })
     assert.deepEqual(provisioned, ["opencode", "codex", "cursor"])
     await access(join(home, ".config", "opencode", "agents", "tars-plan.md"))
-    await access(join(home, ".config", "opencode", "commands", "tars-build.md"))
+    await assert.rejects(() => access(join(home, ".config", "opencode", "commands", "tars-build.md")))
     await access(join(home, ".local", "bin", "tars"))
     await access(join(home, ".config", "opencode", "skills", "handoff-review", ".tars-owned"))
     await access(join(home, ".codex", "skills", "handoff-review", ".tars-owned"))
