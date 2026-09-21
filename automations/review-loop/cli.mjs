@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs, promisify } from "node:util"
 import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validatePair } from "./lib/aoe.mjs"
-import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness } from "./lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness, resolveHarnessModel } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
@@ -43,6 +43,8 @@ async function main() {
       prompt: { type: "string" },
       planning: { type: "string" },
       "plan-model": { type: "string" },
+      "author-model": { type: "string" },
+      "reviewer-model": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -129,6 +131,9 @@ async function launch({ values, state }) {
   const fallback = fallbackLanePreflight(issue)
   const preflight = values.planning === "always" || values.planning === "never" ? fallback : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt).catch(() => ""))
   const planning = resolvePlanning(values.planning, preflight.planning)
+  const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
+  const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
+  const planModel = values["plan-model"] ?? (planning === "required" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
   const names = values.branch
     ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
     : preflight
@@ -142,7 +147,7 @@ async function launch({ values, state }) {
     worktreeName: values["worktree-name"] ?? names.worktreeName,
     maxRounds,
     planning,
-    planModel: values["plan-model"], roles,
+    authorModel, reviewerModel, planModel, roles,
     provision: async (worktreePath) => {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
       await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
@@ -262,7 +267,7 @@ function printUsage() {
   tars watch [--once]
   tars handoff validate --path <handoff-file>
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <provider/model> --reviewer-model <provider/model>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer

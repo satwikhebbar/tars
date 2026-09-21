@@ -21,6 +21,7 @@ test("persists resolved harness snapshots and ignores unbound legacy rows", asyn
     worktreePath: "/current", authorSessionId: "claude-author", reviewerSessionId: "cursor-reviewer",
     authorHarness: "claude", reviewerHarness: "cursor", authorTool: "claude", reviewerTool: "cursor",
     state: "watching", maxRounds: 5, planning: "not_required", phase: "building", planModel: null,
+    authorModel: null, reviewerModel: null,
     transitionHandoffPath: null, transitionWorkflowId: null, transitionRequestedAt: null,
     planVerdictPath: null, planVerdictId: null, iterationCount: 1, currentIteration: 1,
     reviewBudget: null, reviewBudgetConsumed: 0,

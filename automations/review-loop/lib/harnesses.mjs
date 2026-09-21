@@ -29,7 +29,7 @@ export async function loadLaneConfig({ repoPath, configPath }) {
     ...global,
     ...project,
     defaults: { ...global.defaults, ...project.defaults },
-    harnesses: { ...global.harnesses, ...project.harnesses },
+    harnesses: mergeHarnesses(global.harnesses, project.harnesses),
     worktreeFiles: project.worktreeFiles ?? global.worktreeFiles,
   })
 }
@@ -57,9 +57,36 @@ export function normalizeConfig(config = {}) {
 }
 
 export function resolveHarness(config, key) {
-  const harness = BUILTIN_HARNESSES[key] ?? config.harnesses?.[key]
+  const harness = { ...(BUILTIN_HARNESSES[key] ?? {}), ...(config.harnesses?.[key] ?? {}) }
   if (!harness?.tool || typeof harness.tool !== "string") throw new Error(`Unknown TARS harness: ${key}`)
   return { key, tool: harness.tool, displayName: harness.displayName ?? key, launchArgs: harness.launchArgs ?? [] }
+}
+
+export function resolveHarnessModel(config, harnessKey, role, explicitModel) {
+  return explicitModel ?? config.harnesses?.[harnessKey]?.defaults?.[role]?.model
+}
+
+function mergeHarnesses(global = {}, project = {}) {
+  const merged = { ...global }
+  for (const [key, override] of Object.entries(project)) {
+    merged[key] = {
+      ...(global[key] ?? {}),
+      ...override,
+      defaults: {
+        ...(global[key]?.defaults ?? {}),
+        ...(override?.defaults ?? {}),
+      },
+    }
+    for (const role of ["author", "reviewer", "planning"]) {
+      if (global[key]?.defaults?.[role] || override?.defaults?.[role]) {
+        merged[key].defaults[role] = {
+          ...(global[key]?.defaults?.[role] ?? {}),
+          ...(override?.defaults?.[role] ?? {}),
+        }
+      }
+    }
+  }
+  return merged
 }
 
 /** Parses the human-readable AoE inventory without assuming a JSON flag. */

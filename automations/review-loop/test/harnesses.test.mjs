@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { promisify } from "node:util"
-import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, saveHarnessConfig } from "../lib/harnesses.mjs"
+import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, parseInstalledAoeTools, provisionConfiguredWorktreeFiles, provisionHarnessSkills, provisionInstalledHarnesses, provisionOpenCodePlanAgent, provisionTarsCli, provisionWorktreeHarnessRequirements, resolveHarness, resolveHarnessModel, saveHarnessConfig } from "../lib/harnesses.mjs"
 
 const ROOT = new URL("../../..", import.meta.url).pathname
 const execFileAsync = promisify(execFile)
@@ -20,6 +20,25 @@ test("normalizes defaults and resolves custom AoE-backed harnesses", async () =>
   assert.equal(resolveHarness(config, "claude").displayName, "Claude Code")
   assert.deepEqual(resolveHarness(config, "codex").launchArgs, ["--approve-for-me"])
   assert.throws(() => resolveHarness(config, "missing"), /Unknown TARS harness/)
+})
+
+test("merges harness role defaults and lets repository values override global values", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "tars-project-config-"))
+  await mkdir(join(repo, ".tars"), { recursive: true })
+  await writeFile(join(repo, ".tars", "config.json"), JSON.stringify({ harnesses: { codex: { defaults: { reviewer: { model: "gpt-5.6-terra" } } } } }))
+  const configHome = await mkdtemp(join(tmpdir(), "tars-global-config-"))
+  const originalXdg = process.env.XDG_CONFIG_HOME
+  process.env.XDG_CONFIG_HOME = configHome
+  try {
+    await saveHarnessConfig({ harnesses: { codex: { defaults: { author: { model: "gpt-5.6-luna" }, reviewer: { model: "gpt-5.6-luna" } } } } })
+    const config = await loadLaneConfig({ repoPath: repo })
+    assert.equal(resolveHarnessModel(config, "codex", "author"), "gpt-5.6-luna")
+    assert.equal(resolveHarnessModel(config, "codex", "reviewer"), "gpt-5.6-terra")
+    assert.equal(resolveHarnessModel(config, "codex", "reviewer", "gpt-5.6-astra"), "gpt-5.6-astra")
+  } finally {
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = originalXdg
+  }
 })
 
 test("copies configured files from the source repository into a lane worktree", async () => {

@@ -68,20 +68,20 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planModel, roles, provision }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, authorModel, reviewerModel, planModel, roles, provision }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
     // tars-plan is an OpenCode agent. Other harnesses still receive the
     // role-level planning prompt, but must not be passed OpenCode CLI flags.
-    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : [])],
+    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
   })
   const worktreePath = author.path
   const group = groupForWorktree(worktreePath)
   await provision?.(worktreePath)
   await aoe.moveSessionToGroup(author.id, group)
   const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
-    extraArgs: roles.reviewer.launchArgs ?? [],
+    extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
     group,
   })
   state.saveLane({
@@ -99,9 +99,15 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     planning,
     phase: planning === "required" ? "planning" : "building",
     planModel: planModel ?? null,
+    authorModel: authorModel ?? null,
+    reviewerModel: reviewerModel ?? null,
   })
   await aoe.send(author.id, openingPrompt)
   return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
+}
+
+function modelArgs(model) {
+  return model ? ["--model", model] : []
 }
 
 /**
