@@ -50,6 +50,8 @@ tars lane start \
 
 The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup. `--plan-model <provider/model>` is available only when OpenCode is the author.
 
+Preflight always runs through the selected author harness and uses the resolved author model, including an explicit `--author-model` override. The reviewer harness and reviewer model are not involved in preflight.
+
 For `planning: required`, TARS launches its setup-installed OpenCode `tars-plan` agent rather than OpenCode's read-only built-in `plan` agent. It can write only the durable `plans/` and `.agent-handoff/` artifacts, waits for Codex to approve the `plan-review`, sends `/compact`, then switches the live primary session to OpenCode's native `build` agent before sending implementation work. `setup.mjs` installs the planning agent.
 
 For `planning: not_required`, TARS follows the original direct Build → code-review loop. The command prints the created worktree and both session IDs, then sends the appropriate opening issue prompt. It does not start another polling loop.

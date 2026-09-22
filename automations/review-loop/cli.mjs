@@ -128,18 +128,18 @@ async function launch({ values, state }) {
   const roles = rolesFor(values, config)
   if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")
   await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
+  const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const fallback = fallbackLanePreflight(issue)
   let planningReason = null
   const explicitPlanning = values.planning === "always" || values.planning === "never"
   const preflight = explicitPlanning
     ? fallback
-    : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt), {
+    : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt, { model: authorModel }), {
       onFallback: (error) => { planningReason = summarizePreflightError(error) },
     })
   const planning = resolvePlanning(values.planning, preflight.planning)
   const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
   console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
-  const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
   const planModel = values["plan-model"] ?? (planning === "required" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
   const names = values.branch
