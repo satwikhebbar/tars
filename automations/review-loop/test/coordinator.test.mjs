@@ -24,6 +24,21 @@ test("implementation response wakes only the registered Codex session once", asy
   fixture.state.close()
 })
 
+test("feedback prompts require thread-by-thread GitHub replies", async () => {
+  const fixture = await laneFixture()
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/review.md",
+    `id: fix-review-1\ntype: code-review\ncreated_by: reviewer\nworkflow_id: fix\nround: 1\niteration: 1\noutcome: changes_requested\nresponds_to: fix-response-1`,
+  )
+  const result = await fixture.coordinator.processAll()
+  assert.equal(result[0].action, "sent:opencode")
+  assert.match(fixture.aoe.sent[0].message, /every unresolved GitHub review comment/i)
+  assert.match(fixture.aoe.sent[0].message, /original GitHub thread/i)
+  assert.match(fixture.aoe.sent[0].message, /change or disposition and commit/i)
+  fixture.state.close()
+})
+
 test("accepts a numeric issue number as the stable workflow ID", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
