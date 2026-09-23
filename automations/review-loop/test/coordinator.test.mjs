@@ -355,6 +355,53 @@ test("an approved lane ignores dispatched pre-approval responses when validating
   fixture.state.close()
 })
 
+test("an approved lane ignores an undispatched stale response after later progress is recorded", async () => {
+  const fixture = await laneFixture()
+  fixture.state.saveLane({
+    ...fixture.state.lane(fixture.worktree),
+    state: "approved",
+    phase: "building",
+    currentIteration: 2,
+  })
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/stale-response.md",
+    `id: stale-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\niteration: 1\nhead_commit: abc123`,
+  )
+  await writeWorkflowHandoff(
+    fixture.worktree,
+    "inbox/later-review.md",
+    `id: later-review\ntype: code-review\nworkflow_id: fix\nround: 2\niteration: 2\noutcome: approved`,
+  )
+  fixture.state.markDispatched(fixture.worktree, "review:later-review:approved")
+
+  const result = await fixture.coordinator.processAll()
+
+  assert.deepEqual(result, [])
+  assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
+  assert.equal(fixture.aoe.sent.length, 0)
+  fixture.state.close()
+})
+
+test("an approved lane still surfaces a stale response without later progress evidence", async () => {
+  const fixture = await laneFixture()
+  fixture.state.saveLane({
+    ...fixture.state.lane(fixture.worktree),
+    state: "approved",
+    phase: "building",
+    currentIteration: 2,
+  })
+  const frontmatter = `id: stale-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\niteration: 1\nhead_commit: abc123`
+  await writeWorkflowHandoff(fixture.worktree, "inbox/stale-response.md", frontmatter)
+
+  const invalid = await fixture.coordinator.processAll()
+
+  assert.match(invalid[0].action, /invalid-handoff: approved lane requires reopen: true/)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "invalid_handoff")
+  assert.equal(fixture.aoe.sent.length, 0)
+  fixture.state.close()
+})
+
 test("an approved lane surfaces a missing reopen flag until the author corrects it", async () => {
   const fixture = await laneFixture()
   fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), state: "approved", phase: "building" })

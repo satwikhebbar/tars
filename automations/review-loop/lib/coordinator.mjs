@@ -60,11 +60,13 @@ export class ReviewLoopCoordinator {
       // A lane may be approved with its complete history still in the queue.
       // Only a newly published implementation response is a post-approval
       // reopen candidate; prior dispatched responses must remain valid history.
-      .filter((handoff) => {
-        const event = events.find((candidate) => candidate.handoff.path === handoff.path)
-        return event?.reviewKind === "code" && !this.state.hasDispatched(lane.worktreePath, event.key)
-      })
-      .map((handoff) => ({ handoff, errors: validateWorkflowHandoff(handoff, { requiresReopen: activeLaneState(lane) === "approved" }) }))
+      .map((handoff) => ({ handoff, event: events.find((candidate) => candidate.handoff.path === handoff.path) }))
+      .filter(({ event }) => event?.reviewKind === "code" && !this.state.hasDispatched(lane.worktreePath, event.key))
+      // A correction from an earlier iteration can remain in the queue after a
+      // later iteration was successfully dispatched. It is superseded history,
+      // not a new PR reopen request, and must not poison an approved lane.
+      .filter(({ event }) => !isSupersededApprovedImplementation(lane, event, events, (key) => this.state.hasDispatched(lane.worktreePath, key)))
+      .map(({ handoff }) => ({ handoff, errors: validateWorkflowHandoff(handoff, { requiresReopen: activeLaneState(lane) === "approved" }) }))
       .filter((invalid) => invalid.errors.length)
     const invalid = invalidHandoffs[0] ?? contextualInvalidHandoffs[0]
     if (invalid) {
@@ -216,6 +218,19 @@ export class ReviewLoopCoordinator {
 
 function activeLaneState(lane) {
   return lane.state === "invalid_handoff" ? lane.invalidResumeState ?? "watching" : lane.state
+}
+
+function isSupersededApprovedImplementation(lane, event, events, hasDispatched) {
+  if (activeLaneState(lane) !== "approved") return false
+  if (event?.reviewKind !== "code" || event.destination !== "reviewer") return false
+  if (!Number.isInteger(event.iteration) || !Number.isInteger(lane.currentIteration) || event.iteration >= lane.currentIteration) return false
+  return events.some(
+    (candidate) =>
+      candidate.reviewKind === "code" &&
+      Number.isInteger(candidate.iteration) &&
+      candidate.iteration >= lane.currentIteration &&
+      hasDispatched(candidate.key),
+  )
 }
 
 /** Reads active handoffs only; archived history is never re-dispatched. */
