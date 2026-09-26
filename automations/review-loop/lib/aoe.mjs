@@ -75,11 +75,12 @@ export class AoeClient {
     await execFileAsync(this.command, args)
   }
 
-  async addSession(worktreePath, tool, title, { extraArgs = [], group, command } = {}) {
+  async addSession(worktreePath, tool, title, { extraArgs = [], group, command, trustHooks = false } = {}) {
     const before = await this.listSessions()
     const args = ["add", worktreePath, "--tool", tool, "--title", title]
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
     if (group) args.push("--group", group)
+    if (trustHooks) args.push("--trust-hooks")
     // AoE treats --cmd as an alternative to --tool. Use --cmd-override so
     // traced sessions retain their configured harness and session identity.
     if (command) args.push("--cmd-override", command)
@@ -89,7 +90,7 @@ export class AoeClient {
     return session
   }
 
-  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command } = {}) {
+  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command, trustHooks = false } = {}) {
     const before = await this.listSessions()
     const args = [
       "add",
@@ -103,6 +104,7 @@ export class AoeClient {
       "--new-branch",
     ]
     if (group) args.push("--group", group)
+    if (trustHooks) args.push("--trust-hooks")
     // AoE forwards this value to the OpenCode process when the session starts.
     // Keep it a single argument because AoE owns shell splitting at that boundary.
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))

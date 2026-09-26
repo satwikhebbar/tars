@@ -69,7 +69,7 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false, trustHooks = false }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const capture = investigationCapture ? await prepareCapture({ statePath: state.path, roles }) : null
   let author
@@ -83,6 +83,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
       extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
       command: captureLaunchCommand(roles.author, capture?.roles.author),
       requireNew: investigationCapture,
+      trustHooks,
     })
     const worktreePath = author.path
     const group = groupForWorktree(worktreePath)
@@ -92,6 +93,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
       extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
       group,
       command: captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
+      trustHooks,
     })
     if (capture) {
       await attributeOpenCodeRole("author", author.id, roles.author, capture, aoe)

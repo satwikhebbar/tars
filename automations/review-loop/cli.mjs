@@ -47,6 +47,7 @@ async function main() {
       "author-model": { type: "string" },
       "reviewer-model": { type: "string" },
       investigate: { type: "string" },
+      "trust-hooks": { type: "boolean", default: false },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -165,6 +166,7 @@ async function launch({ values, state }) {
     planningReason,
     authorModel, reviewerModel, planModel, roles,
     investigationCapture,
+    trustHooks: values["trust-hooks"],
     provision: async (worktreePath) => {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
       await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
@@ -284,7 +286,7 @@ function printUsage() {
   tars watch [--once]
   tars handoff validate --path <handoff-file>
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <provider/model> --reviewer-model <provider/model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <provider/model> --reviewer-model <provider/model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--trust-hooks] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer

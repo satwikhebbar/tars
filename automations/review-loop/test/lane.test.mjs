@@ -245,6 +245,19 @@ test("starts a capture-enabled Codex lane with separate trace roots", async () =
   assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
 })
 
+test("passes explicit hook trust to both newly-created lane sessions", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  await startLane({
+    aoe, state, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
+    branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
+    planning: "not_required", openingPrompt: "start", trustHooks: true,
+  })
+
+  assert.equal(aoe.authorOptions.trustHooks, true)
+  assert.equal(aoe.reviewerOptions.trustHooks, true)
+})
+
 test("purges a newly-created capture author when reviewer startup fails", async () => {
   const aoe = new FakeAoe()
   aoe.addError = new Error("reviewer failed")
@@ -635,20 +648,23 @@ class FakeAoe {
     this.trashed = new Set()
   }
 
-  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group, command } = {}) {
+  async findOrCreateWorktreeSession(repoPath, branch, title, options = {}) {
+    const { extraArgs = [], group, command } = options
     this.added.push([repoPath, branch])
     this.titles.push(title)
     this.extraArgs = extraArgs
     this.groups.push(group)
     this.command = command
+    this.authorOptions = options
     return { id: "open-44", path: this.worktreePath ?? "/repo--issue-44-add-calendar-export" }
   }
 
-  async addSession(path, tool, title, { extraArgs = [], group, command } = {}) {
+  async addSession(path, tool, title, options = {}) {
+    const { extraArgs = [], group, command } = options
     if (this.addError) throw this.addError
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
-    this.reviewerOptions = { extraArgs, group }
+    this.reviewerOptions = { extraArgs, group, ...(options.trustHooks ? { trustHooks: true } : {}) }
     this.reviewerCommand = command
     return { id: "codex-44", path }
   }

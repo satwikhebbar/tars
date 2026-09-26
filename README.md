@@ -152,6 +152,10 @@ investigation probe, add `--investigate capture`. TARS configures native
 capture before either role starts and retains only active-lane evidence
 references. It does not import, copy, or report native evidence yet.
 
+If AoE has not yet acknowledged the repository's hooks and project-local MCP
+configuration, review them and add `--trust-hooks` to explicitly authorize AoE
+to trust them for this new lane.
+
 ```bash
 tars lane start \
   --repo /absolute/path/to/main-checkout \
