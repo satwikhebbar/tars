@@ -9,11 +9,13 @@ The current lane uses `.agent-handoff/` as a durable queue. Work only in the cur
 
 ## Author
 
-For the first author handoff, use the issue/workflow ID, round, and iteration
-from the opening prompt or current lane metadata. The templates below are
-sufficient for handoff mechanics; do not inspect sibling worktrees or prior
-lanes for examples. Read an existing handoff only from the current lane when
-determining a later round, response target, or assigned iteration.
+For the first author handoff, copy `workflow_id`, `round`, and any assigned
+`iteration` from the opening prompt. Use the templates and
+`tars handoff validate --path <handoff-file>` for handoff mechanics; if the
+prompt lacks `workflow_id`, ask the coordinator for it. Keep metadata lookup in
+the prompt and current lane; shared source and runtime folders are not lookup
+paths. Read current-lane handoffs only when determining a later round, response
+target, or assigned iteration.
 
 - Publish one Markdown handoff in `.agent-handoff/inbox/` after committing a plan or verified code. The coordinator reads Markdown frontmatter; use the matching template below rather than a JSON file.
 - Set `created_by: author`; preserve `workflow_id`, increment `round`, and copy any assigned `iteration`. Before publishing, run `tars handoff validate --path <handoff-file>` and correct every reported error.
