@@ -75,12 +75,11 @@ export class AoeClient {
     await execFileAsync(this.command, args)
   }
 
-  async addSession(worktreePath, tool, title, { extraArgs = [], group, command, trustHooks = false } = {}) {
+  async addSession(worktreePath, tool, title, { extraArgs = [], group, command } = {}) {
     const before = await this.listSessions()
     const args = ["add", worktreePath, "--tool", tool, "--title", title]
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
     if (group) args.push("--group", group)
-    if (trustHooks) args.push("--trust-hooks")
     // AoE treats --cmd as an alternative to --tool. Use --cmd-override so
     // traced sessions retain their configured harness and session identity.
     if (command) args.push("--cmd-override", command)
@@ -90,7 +89,7 @@ export class AoeClient {
     return session
   }
 
-  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command, trustHooks = false } = {}) {
+  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command } = {}) {
     const before = await this.listSessions()
     const args = [
       "add",
@@ -104,7 +103,6 @@ export class AoeClient {
       "--new-branch",
     ]
     if (group) args.push("--group", group)
-    if (trustHooks) args.push("--trust-hooks")
     // AoE forwards this value to the OpenCode process when the session starts.
     // Keep it a single argument because AoE owns shell splitting at that boundary.
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
@@ -131,7 +129,17 @@ export class AoeClient {
   }
 
   async startSession(sessionId) {
-    await execFileAsync(this.command, ["session", "start", sessionId])
+    try {
+      await execFileAsync(this.command, ["session", "start", sessionId])
+    } catch (error) {
+      if (String(error?.stderr ?? error?.message ?? "").includes("agent hook paths have not been acknowledged")) {
+        throw new Error(
+          "AoE has not acknowledged its agent hook paths on this machine. Capture does not need this acknowledgement, but AoE requires it to launch this harness. Open the AoE TUI, create a temporary Codex or OpenCode session, review the hook paths and commands in the acknowledgement dialog, accept, then remove the temporary session and retry the TARS lane start.",
+          { cause: error },
+        )
+      }
+      throw error
+    }
     await waitForSessionReady(this, sessionId)
   }
 

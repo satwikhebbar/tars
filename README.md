@@ -152,9 +152,11 @@ investigation probe, add `--investigate capture`. TARS configures native
 capture before either role starts and retains only active-lane evidence
 references. It does not import, copy, or report native evidence yet.
 
-If AoE has not yet acknowledged the repository's hooks and project-local MCP
-configuration, review them and add `--trust-hooks` to explicitly authorize AoE
-to trust them for this new lane.
+AoE may require a one-time acknowledgement of its agent hook paths before it
+launches Codex or OpenCode sessions on this machine. If lane start reports that
+the paths have not been acknowledged, open the AoE TUI, create a temporary
+Codex or OpenCode session, review and accept the hook acknowledgement dialog,
+then remove the temporary session and retry.
 
 ```bash
 tars lane start \

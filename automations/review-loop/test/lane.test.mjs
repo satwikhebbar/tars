@@ -245,19 +245,6 @@ test("starts a capture-enabled Codex lane with separate trace roots", async () =
   assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
 })
 
-test("passes explicit hook trust to both newly-created lane sessions", async () => {
-  const aoe = new FakeAoe()
-  const state = new FakeState()
-  await startLane({
-    aoe, state, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
-    branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
-    planning: "not_required", openingPrompt: "start", trustHooks: true,
-  })
-
-  assert.equal(aoe.authorOptions.trustHooks, true)
-  assert.equal(aoe.reviewerOptions.trustHooks, true)
-})
-
 test("purges sessions created before a capture reviewer startup failure", async () => {
   const aoe = new FakeAoe()
   aoe.addError = new Error("reviewer failed")
@@ -666,7 +653,7 @@ class FakeAoe {
     }
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
-    this.reviewerOptions = { extraArgs, group, ...(options.trustHooks ? { trustHooks: true } : {}) }
+    this.reviewerOptions = { extraArgs, group }
     this.reviewerCommand = command
     return { id: "codex-44", path }
   }
