@@ -14,6 +14,7 @@ import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
+import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -45,6 +46,7 @@ async function main() {
       "plan-model": { type: "string" },
       "author-model": { type: "string" },
       "reviewer-model": { type: "string" },
+      investigate: { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -83,6 +85,7 @@ function rolesFor(values, config) {
 }
 
 async function start({ values, state, config }) {
+  rejectCaptureOutsideLaneStart(values)
   if (!values.worktree) throw new Error("start requires --worktree <path>")
   const worktreePath = await realpath(values.worktree)
   const aoe = new AoeClient()
@@ -108,6 +111,7 @@ async function watch({ values, state, aoe = new AoeClient() }) {
 }
 
 async function register({ values, state, config }) {
+  rejectCaptureOutsideLaneStart(values)
   if (!values.worktree) throw new Error("lane register requires --worktree <path>")
   const worktreePath = await realpath(values.worktree)
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
@@ -126,6 +130,8 @@ async function launch({ values, state }) {
   const config = await loadLaneConfig({ repoPath, configPath: values.config })
   const issue = await readIssue(repoPath, issueNumber)
   const roles = rolesFor(values, config)
+  const investigationCapture = resolveInvestigation(values.investigate)
+  if (investigationCapture) assertCaptureSupported(roles)
   if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")
   await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
   const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
@@ -158,6 +164,7 @@ async function launch({ values, state }) {
     planningSource,
     planningReason,
     authorModel, reviewerModel, planModel, roles,
+    investigationCapture,
     provision: async (worktreePath) => {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
       await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
@@ -277,12 +284,22 @@ function printUsage() {
   tars watch [--once]
   tars handoff validate --path <handoff-file>
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <provider/model> --reviewer-model <provider/model>] [--planning auto|always|never] [--plan-model <provider/model>] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <provider/model> --reviewer-model <provider/model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   tars status`)
+}
+
+function resolveInvestigation(value) {
+  if (value === undefined) return false
+  if (value === "capture") return true
+  throw new Error("--investigate must be capture")
+}
+
+function rejectCaptureOutsideLaneStart(values) {
+  if (values.investigate !== undefined) throw new Error("--investigate capture is supported only by tars lane start for newly launched sessions.")
 }
 
 function laneAoe(client) {
@@ -291,6 +308,7 @@ function laneAoe(client) {
     createPair: (worktreePath, roles) => createPair(client, worktreePath, roles),
     findOrCreateWorktreeSession: async (repoPath, branch, title, options = {}) => {
       const existing = await findWorktreeSession(client, repoPath, branch, options.tool)
+      if (existing && options.requireNew) throw new Error(`--investigate capture requires a newly launched ${options.tool} session; found existing AoE session ${existing.id} for branch ${branch}.`)
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title, options) => client.addSession(worktreePath, tool, title, options),

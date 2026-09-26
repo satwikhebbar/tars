@@ -223,6 +223,28 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(state.entries[0].phase, "building")
 })
 
+test("starts a capture-enabled Codex lane with separate trace roots", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  state.path = "/tmp/tars-state/state.sqlite"
+  const roles = {
+    author: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+    reviewer: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+  }
+  await startLane({
+    aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
+    branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
+    planning: "not_required", openingPrompt: "start", investigationCapture: true,
+  })
+
+  assert.match(aoe.command, /^env CODEX_ROLLOUT_TRACE_ROOT='\/tmp\/tars-state\/native-evidence\/lane-[0-9a-f-]+\/author' codex$/)
+  assert.match(aoe.reviewerCommand, /^env CODEX_ROLLOUT_TRACE_ROOT='\/tmp\/tars-state\/native-evidence\/lane-[0-9a-f-]+\/reviewer' codex$/)
+  assert.notEqual(aoe.command, aoe.reviewerCommand)
+  assert.equal(state.entries[0].investigationCapture, "capture")
+  assert.equal(state.entries[0].authorEvidence.harness, "codex")
+  assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
+})
+
 test("starts a planning lane with OpenCode's configured Plan agent", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
@@ -585,18 +607,20 @@ class FakeAoe {
     this.trashed = new Set()
   }
 
-  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group } = {}) {
+  async findOrCreateWorktreeSession(repoPath, branch, title, { extraArgs = [], group, command } = {}) {
     this.added.push([repoPath, branch])
     this.titles.push(title)
     this.extraArgs = extraArgs
     this.groups.push(group)
+    this.command = command
     return { id: "open-44", path: this.worktreePath ?? "/repo--issue-44-add-calendar-export" }
   }
 
-  async addSession(path, tool, title, { extraArgs = [], group } = {}) {
+  async addSession(path, tool, title, { extraArgs = [], group, command } = {}) {
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
     this.reviewerOptions = { extraArgs, group }
+    this.reviewerCommand = command
     return { id: "codex-44", path }
   }
 

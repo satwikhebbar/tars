@@ -1,6 +1,7 @@
 import { access, readFile, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { groupForWorktree } from "./aoe.mjs"
+import { attributeOpenCodeSession, captureLaunchCommand, prepareCapture } from "./investigation-capture.mjs"
 
 /** Starts watching an existing pair after placing both role-bound sessions in its lane group. */
 export async function startExistingLane({ aoe, state, worktreePath, pair, roles, maxRounds }) {
@@ -68,13 +69,16 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+  const capture = investigationCapture ? await prepareCapture({ statePath: state.path, roles }) : null
   const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
     tool: roles.author.tool,
     // tars-plan is an OpenCode agent. Other harnesses still receive the
     // role-level planning prompt, but must not be passed OpenCode CLI flags.
     extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
+    command: captureLaunchCommand(roles.author, capture?.roles.author),
+    requireNew: investigationCapture,
   })
   const worktreePath = author.path
   const group = groupForWorktree(worktreePath)
@@ -83,7 +87,12 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
     extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
     group,
+    command: captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
   })
+  if (capture) {
+    await attributeOpenCodeRole("author", author.id, roles.author, capture, aoe)
+    await attributeOpenCodeRole("reviewer", reviewer.id, roles.reviewer, capture, aoe)
+  }
   state.saveLane({
     worktreePath,
     authorSessionId: author.id,
@@ -103,9 +112,21 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     planModel: planModel ?? null,
     authorModel: authorModel ?? null,
     reviewerModel: reviewerModel ?? null,
+    investigationCapture: capture?.mode ?? "off",
+    authorEvidence: capture?.roles.author ?? null,
+    reviewerEvidence: capture?.roles.reviewer ?? null,
   })
   await aoe.send(author.id, openingPrompt)
   return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
+}
+
+async function attributeOpenCodeRole(role, sessionId, harness, capture, aoe) {
+  if (harness.key !== "opencode") return
+  try {
+    capture.roles[role] = await attributeOpenCodeSession({ aoe, aoeSessionId: sessionId, role })
+  } catch (error) {
+    capture.roles[role] = { status: "unavailable", harness: "opencode", reason: `OpenCode launch handshake failed: ${error.message}` }
+  }
 }
 
 function modelArgs(model) {

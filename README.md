@@ -147,6 +147,20 @@ tars lane start \
   --planning auto
 ```
 
+To prepare a newly launched Codex/OpenCode lane for the active-lane
+investigation probe, add `--investigate capture`. TARS configures native
+capture before either role starts and retains only active-lane evidence
+references. It does not import, copy, or report native evidence yet.
+
+```bash
+tars lane start \
+  --repo /absolute/path/to/main-checkout \
+  --issue 21 \
+  --author opencode --reviewer codex \
+  --planning never \
+  --investigate capture
+```
+
 Use `--planning always` to require a plan-first lane, or `--planning never`
 for direct implementation. A plan-first lane can use a configured planning
 model:

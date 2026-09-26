@@ -27,7 +27,23 @@ test("persists resolved harness snapshots and ignores unbound legacy rows", asyn
     planVerdictPath: null, planVerdictId: null, iterationCount: 1, currentIteration: 1,
     reviewBudget: null, reviewBudgetConsumed: 0,
     invalidResumeState: null, invalidResumePhase: null,
+    investigationCapture: "off", authorEvidence: null, reviewerEvidence: null,
   })
+  state.close()
+})
+
+test("round-trips active-lane capture references without raw evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
+  const state = new StateStore(join(directory, "state.sqlite"))
+  await state.open()
+  state.saveLane({
+    worktreePath: "/capture", authorSessionId: "author", reviewerSessionId: "reviewer",
+    state: "watching", maxRounds: 5, investigationCapture: "capture",
+    authorEvidence: { status: "available", harness: "codex", traceRoot: "/tmp/native/author" },
+    reviewerEvidence: { status: "available", harness: "opencode", nativeSessionId: "ses_123" },
+  })
+  assert.deepEqual(state.lane("/capture").authorEvidence, { status: "available", harness: "codex", traceRoot: "/tmp/native/author" })
+  assert.deepEqual(state.lane("/capture").reviewerEvidence, { status: "available", harness: "opencode", nativeSessionId: "ses_123" })
   state.close()
 })
 

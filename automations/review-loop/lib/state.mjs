@@ -48,6 +48,9 @@ export class StateStore {
         reviewer_tool TEXT,
         invalid_resume_state TEXT,
         invalid_resume_phase TEXT,
+        investigation_capture TEXT NOT NULL DEFAULT 'off',
+        author_evidence_json TEXT,
+        reviewer_evidence_json TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS dispatched_events (
@@ -87,6 +90,9 @@ export class StateStore {
       "reviewer_tool TEXT",
       "invalid_resume_state TEXT",
       "invalid_resume_phase TEXT",
+      "investigation_capture TEXT NOT NULL DEFAULT 'off'",
+      "author_evidence_json TEXT",
+      "reviewer_evidence_json TEXT",
     ]) {
       try {
         this.database.exec(`ALTER TABLE lanes ADD COLUMN ${column}`)
@@ -114,8 +120,8 @@ export class StateStore {
     const authorTool = lane.authorTool ?? "opencode"
     const reviewerTool = lane.reviewerTool ?? "codex"
     this.database
-      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, planning_source, planning_reason, phase, plan_model, author_model, reviewer_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, updated_at)
-        VALUES (${Array(30).fill("?").join(", ")})
+      .prepare(`INSERT INTO lanes (worktree_path, opencode_session_id, codex_session_id, author_session_id, reviewer_session_id, author_harness, reviewer_harness, author_tool, reviewer_tool, state, max_rounds, planning, planning_source, planning_reason, phase, plan_model, author_model, reviewer_model, transition_handoff_path, transition_workflow_id, transition_requested_at, plan_verdict_path, plan_verdict_id, iteration_count, current_iteration, review_budget, review_budget_consumed, invalid_resume_state, invalid_resume_phase, investigation_capture, author_evidence_json, reviewer_evidence_json, updated_at)
+        VALUES (${Array(33).fill("?").join(", ")})
         ON CONFLICT(worktree_path) DO UPDATE SET
           author_session_id = excluded.author_session_id,
           reviewer_session_id = excluded.reviewer_session_id,
@@ -143,6 +149,9 @@ export class StateStore {
           review_budget_consumed = excluded.review_budget_consumed,
           invalid_resume_state = excluded.invalid_resume_state,
           invalid_resume_phase = excluded.invalid_resume_phase,
+          investigation_capture = excluded.investigation_capture,
+          author_evidence_json = excluded.author_evidence_json,
+          reviewer_evidence_json = excluded.reviewer_evidence_json,
           updated_at = excluded.updated_at`)
       .run(
         lane.worktreePath,
@@ -174,6 +183,9 @@ export class StateStore {
         lane.reviewBudgetConsumed ?? 0,
         lane.invalidResumeState ?? null,
         lane.invalidResumePhase ?? null,
+        lane.investigationCapture ?? "off",
+        lane.authorEvidence ? JSON.stringify(lane.authorEvidence) : null,
+        lane.reviewerEvidence ? JSON.stringify(lane.reviewerEvidence) : null,
         new Date().toISOString(),
       )
   }
@@ -322,5 +334,8 @@ function toLane(row) {
     reviewBudgetConsumed: row.review_budget_consumed,
     invalidResumeState: row.invalid_resume_state,
     invalidResumePhase: row.invalid_resume_phase,
+    investigationCapture: row.investigation_capture,
+    authorEvidence: row.author_evidence_json ? JSON.parse(row.author_evidence_json) : null,
+    reviewerEvidence: row.reviewer_evidence_json ? JSON.parse(row.reviewer_evidence_json) : null,
   }
 }
