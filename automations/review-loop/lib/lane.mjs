@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from "node:fs/promises"
+import { access, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { groupForWorktree } from "./aoe.mjs"
 import { attributeOpenCodeSession, captureLaunchCommand, prepareCapture } from "./investigation-capture.mjs"
@@ -72,52 +72,74 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const capture = investigationCapture ? await prepareCapture({ statePath: state.path, roles }) : null
-  const author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
-    tool: roles.author.tool,
-    // tars-plan is an OpenCode agent. Other harnesses still receive the
-    // role-level planning prompt, but must not be passed OpenCode CLI flags.
-    extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
-    command: captureLaunchCommand(roles.author, capture?.roles.author),
-    requireNew: investigationCapture,
-  })
-  const worktreePath = author.path
-  const group = groupForWorktree(worktreePath)
-  await provision?.(worktreePath)
-  await aoe.moveSessionToGroup(author.id, group)
-  const reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
-    extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
-    group,
-    command: captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
-  })
-  if (capture) {
-    await attributeOpenCodeRole("author", author.id, roles.author, capture, aoe)
-    await attributeOpenCodeRole("reviewer", reviewer.id, roles.reviewer, capture, aoe)
+  let author
+  let reviewer
+  let registered = false
+  try {
+    author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
+      tool: roles.author.tool,
+      // tars-plan is an OpenCode agent. Other harnesses still receive the
+      // role-level planning prompt, but must not be passed OpenCode CLI flags.
+      extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
+      command: captureLaunchCommand(roles.author, capture?.roles.author),
+      requireNew: investigationCapture,
+    })
+    const worktreePath = author.path
+    const group = groupForWorktree(worktreePath)
+    await provision?.(worktreePath)
+    await aoe.moveSessionToGroup(author.id, group)
+    reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
+      extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
+      group,
+      command: captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
+    })
+    if (capture) {
+      await attributeOpenCodeRole("author", author.id, roles.author, capture, aoe)
+      await attributeOpenCodeRole("reviewer", reviewer.id, roles.reviewer, capture, aoe)
+    }
+    state.saveLane({
+      worktreePath,
+      authorSessionId: author.id,
+      reviewerSessionId: reviewer.id,
+      opencodeSessionId: author.id,
+      codexSessionId: reviewer.id,
+      authorHarness: roles.author.key,
+      reviewerHarness: roles.reviewer.key,
+      authorTool: roles.author.tool,
+      reviewerTool: roles.reviewer.tool,
+      state: "watching",
+      maxRounds,
+      planning,
+      planningSource,
+      planningReason,
+      phase: planning === "required" ? "planning" : "building",
+      planModel: planModel ?? null,
+      authorModel: authorModel ?? null,
+      reviewerModel: reviewerModel ?? null,
+      investigationCapture: capture?.mode ?? "off",
+      authorEvidence: capture?.roles.author ?? null,
+      reviewerEvidence: capture?.roles.reviewer ?? null,
+    })
+    registered = true
+    await aoe.send(author.id, openingPrompt)
+    return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
+  } catch (error) {
+    if (capture && !registered) await cleanupFailedCaptureStart({ aoe, author, reviewer, capture })
+    throw error
   }
-  state.saveLane({
-    worktreePath,
-    authorSessionId: author.id,
-    reviewerSessionId: reviewer.id,
-    opencodeSessionId: author.id,
-    codexSessionId: reviewer.id,
-    authorHarness: roles.author.key,
-    reviewerHarness: roles.reviewer.key,
-    authorTool: roles.author.tool,
-    reviewerTool: roles.reviewer.tool,
-    state: "watching",
-    maxRounds,
-    planning,
-    planningSource,
-    planningReason,
-    phase: planning === "required" ? "planning" : "building",
-    planModel: planModel ?? null,
-    authorModel: authorModel ?? null,
-    reviewerModel: reviewerModel ?? null,
-    investigationCapture: capture?.mode ?? "off",
-    authorEvidence: capture?.roles.author ?? null,
-    reviewerEvidence: capture?.roles.reviewer ?? null,
-  })
-  await aoe.send(author.id, openingPrompt)
-  return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
+}
+
+async function cleanupFailedCaptureStart({ aoe, author, reviewer, capture }) {
+  const removals = []
+  if (reviewer) removals.push(aoe.removeSession(reviewer.id, { purge: true, force: true }))
+  if (author) removals.push(aoe.removeSession(author.id, {
+    deleteWorktree: true,
+    deleteBranch: true,
+    force: true,
+    purge: true,
+  }))
+  removals.push(rm(capture.root, { recursive: true, force: true }))
+  await Promise.allSettled(removals)
 }
 
 async function attributeOpenCodeRole(role, sessionId, harness, capture, aoe) {

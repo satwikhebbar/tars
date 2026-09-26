@@ -245,6 +245,34 @@ test("starts a capture-enabled Codex lane with separate trace roots", async () =
   assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
 })
 
+test("purges a newly-created capture author when reviewer startup fails", async () => {
+  const aoe = new FakeAoe()
+  aoe.addError = new Error("reviewer failed")
+  const state = new FakeState()
+  state.path = "/tmp/tars-state/state.sqlite"
+  const roles = {
+    author: { key: "opencode", tool: "opencode" },
+    reviewer: { key: "codex", tool: "codex" },
+  }
+
+  await assert.rejects(
+    () => startLane({
+      aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
+      branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
+      planning: "not_required", openingPrompt: "start", investigationCapture: true,
+    }),
+    /reviewer failed/,
+  )
+
+  assert.deepEqual(aoe.removed, [["open-44", {
+    deleteWorktree: true,
+    deleteBranch: true,
+    force: true,
+    purge: true,
+  }]])
+  assert.deepEqual(state.entries, [])
+})
+
 test("starts a planning lane with OpenCode's configured Plan agent", async () => {
   const aoe = new FakeAoe()
   const state = new FakeState()
@@ -617,6 +645,7 @@ class FakeAoe {
   }
 
   async addSession(path, tool, title, { extraArgs = [], group, command } = {}) {
+    if (this.addError) throw this.addError
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
     this.reviewerOptions = { extraArgs, group }
