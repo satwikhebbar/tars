@@ -70,7 +70,7 @@ The completed Codex fixture contained 8 terminal operations, 9 tool calls, 7 inf
 
 ## What is still unproven
 
-1. The probes establish manual compaction markers, but not automatic compaction under context pressure or the behavior of a resumed/replacement session after compaction. Those cases need a follow-up probe before TARS treats them as equivalent reset boundaries.
+1. The probes establish manual compaction markers, but not automatic compaction under context pressure or the behavior of a resumed/replacement session after compaction. The first cut assumes automatic compaction has the same observable reset semantics as manual compaction; [issue #20](https://github.com/satwikhebbar/tars/issues/20) tracks the follow-up proof.
 2. The first worktree matrix established a conservative initial subset: simple direct commands behind an allowlisted `rtk` wrapper, plus the negative redirection rule. Pipes, substitutions, scripts, aliases, multiple targets, and Codex output completeness remain unsupported. It needs saved-record and parser fixtures for those forms, plus an OpenCode capture that reaches every form under per-operation time limits, before that subset can expand.
 3. The analyst experiment used one small, single-role Codex session. It did not test a complete author/reviewer lane, handoff commit attribution, reviewer rereads across changed and unchanged commits, or a long session's budget boundary.
 
