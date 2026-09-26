@@ -258,9 +258,10 @@ test("passes explicit hook trust to both newly-created lane sessions", async () 
   assert.equal(aoe.reviewerOptions.trustHooks, true)
 })
 
-test("purges a newly-created capture author when reviewer startup fails", async () => {
+test("purges sessions created before a capture reviewer startup failure", async () => {
   const aoe = new FakeAoe()
   aoe.addError = new Error("reviewer failed")
+  aoe.addsBeforeFailure = true
   const state = new FakeState()
   state.path = "/tmp/tars-state/state.sqlite"
   const roles = {
@@ -277,12 +278,10 @@ test("purges a newly-created capture author when reviewer startup fails", async 
     /reviewer failed/,
   )
 
-  assert.deepEqual(aoe.removed, [["open-44", {
-    deleteWorktree: true,
-    deleteBranch: true,
-    force: true,
-    purge: true,
-  }]])
+  assert.deepEqual(aoe.removed, [
+    ["failed-reviewer", { purge: true, force: true }],
+    ["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
+  ])
   assert.deepEqual(state.entries, [])
 })
 
@@ -661,7 +660,10 @@ class FakeAoe {
 
   async addSession(path, tool, title, options = {}) {
     const { extraArgs = [], group, command } = options
-    if (this.addError) throw this.addError
+    if (this.addError) {
+      if (this.addsBeforeFailure) this.sessions.push({ id: "failed-reviewer", path, tool })
+      throw this.addError
+    }
     this.added.push([path, tool])
     this.reviewerExtraArgs = extraArgs
     this.reviewerOptions = { extraArgs, group, ...(options.trustHooks ? { trustHooks: true } : {}) }

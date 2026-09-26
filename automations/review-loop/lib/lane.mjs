@@ -132,16 +132,29 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
 }
 
 async function cleanupFailedCaptureStart({ aoe, author, reviewer, capture }) {
-  const removals = []
-  if (reviewer) removals.push(aoe.removeSession(reviewer.id, { purge: true, force: true }))
-  if (author) removals.push(aoe.removeSession(author.id, {
-    deleteWorktree: true,
-    deleteBranch: true,
-    force: true,
-    purge: true,
-  }))
-  removals.push(rm(capture.root, { recursive: true, force: true }))
-  await Promise.allSettled(removals)
+  // AoE creates a session record before starting its terminal. If start fails,
+  // addSession() throws before it can return that reviewer to us. Discover it
+  // from this freshly-created worktree and remove it before its owner, whose
+  // removal releases the worktree and branch.
+  const related = author
+    ? await aoe.listSessions().catch(() => [])
+    : []
+  const sessionIds = new Set([
+    ...(reviewer ? [reviewer.id] : []),
+    ...related.filter((session) => session.path === author.path && session.id !== author.id).map((session) => session.id),
+  ])
+  for (const sessionId of sessionIds) {
+    await aoe.removeSession(sessionId, { purge: true, force: true }).catch(() => {})
+  }
+  if (author) {
+    await aoe.removeSession(author.id, {
+      deleteWorktree: true,
+      deleteBranch: true,
+      force: true,
+      purge: true,
+    }).catch(() => {})
+  }
+  await rm(capture.root, { recursive: true, force: true }).catch(() => {})
 }
 
 async function attributeOpenCodeRole(role, sessionId, harness, capture, aoe) {
