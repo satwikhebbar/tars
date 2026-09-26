@@ -80,7 +80,9 @@ export class AoeClient {
     const args = ["add", worktreePath, "--tool", tool, "--title", title]
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
     if (group) args.push("--group", group)
-    if (command) args.push("--cmd", command)
+    // AoE treats --cmd as an alternative to --tool. Use --cmd-override so
+    // traced sessions retain their configured harness and session identity.
+    if (command) args.push("--cmd-override", command)
     await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
@@ -104,7 +106,7 @@ export class AoeClient {
     // AoE forwards this value to the OpenCode process when the session starts.
     // Keep it a single argument because AoE owns shell splitting at that boundary.
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
-    if (command) args.push("--cmd", command)
+    if (command) args.push("--cmd-override", command)
     await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
