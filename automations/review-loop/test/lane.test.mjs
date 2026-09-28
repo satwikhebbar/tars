@@ -223,53 +223,72 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(state.entries[0].phase, "building")
 })
 
-test("starts a capture-enabled Codex lane with separate trace roots", async () => {
-  const aoe = new FakeAoe()
-  const state = new FakeState()
-  state.path = "/tmp/tars-state/state.sqlite"
-  const roles = {
-    author: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
-    reviewer: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
-  }
-  await startLane({
-    aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
-    branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
-    planning: "not_required", openingPrompt: "start", investigationCapture: true,
-  })
-
-  assert.match(aoe.command, /^env CODEX_ROLLOUT_TRACE_ROOT='\/tmp\/tars-state\/native-evidence\/lane-[0-9a-f-]+\/author' codex$/)
-  assert.match(aoe.reviewerCommand, /^env CODEX_ROLLOUT_TRACE_ROOT='\/tmp\/tars-state\/native-evidence\/lane-[0-9a-f-]+\/reviewer' codex$/)
-  assert.notEqual(aoe.command, aoe.reviewerCommand)
-  assert.equal(state.entries[0].investigationCapture, "capture")
-  assert.equal(state.entries[0].authorEvidence.harness, "codex")
-  assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
-})
-
-test("purges sessions created before a capture reviewer startup failure", async () => {
-  const aoe = new FakeAoe()
-  aoe.addError = new Error("reviewer failed")
-  aoe.addsBeforeFailure = true
-  const state = new FakeState()
-  state.path = "/tmp/tars-state/state.sqlite"
-  const roles = {
-    author: { key: "opencode", tool: "opencode" },
-    reviewer: { key: "codex", tool: "codex" },
-  }
-
-  await assert.rejects(
-    () => startLane({
+test("starts a capture-enabled Codex lane with separate trace roots under CODEX_HOME", async () => {
+  const previousCodexHome = process.env.CODEX_HOME
+  const codexHome = await mkdtemp(join(tmpdir(), "tars-codex-home-"))
+  process.env.CODEX_HOME = codexHome
+  try {
+    const aoe = new FakeAoe()
+    const state = new FakeState()
+    state.path = "/tmp/tars-state/state.sqlite"
+    const roles = {
+      author: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+      reviewer: { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] },
+    }
+    await startLane({
       aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
       branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
       planning: "not_required", openingPrompt: "start", investigationCapture: true,
-    }),
-    /reviewer failed/,
-  )
+    })
 
-  assert.deepEqual(aoe.removed, [
-    ["failed-reviewer", { purge: true, force: true }],
-    ["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
-  ])
-  assert.deepEqual(state.entries, [])
+    const traceRoot = `${codexHome}/tars/rollout-traces/lane-[0-9a-f-]+`
+    assert.match(aoe.command, new RegExp(`^env CODEX_ROLLOUT_TRACE_ROOT='${traceRoot}/author' codex$`))
+    assert.match(aoe.reviewerCommand, new RegExp(`^env CODEX_ROLLOUT_TRACE_ROOT='${traceRoot}/reviewer' codex$`))
+    assert.notEqual(aoe.command, aoe.reviewerCommand)
+    assert.equal(state.entries[0].investigationCapture, "capture")
+    assert.equal(state.entries[0].authorEvidence.harness, "codex")
+    assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+    else process.env.CODEX_HOME = previousCodexHome
+    await rm(codexHome, { recursive: true, force: true })
+  }
+})
+
+test("purges sessions created before a capture reviewer startup failure", async () => {
+  const previousCodexHome = process.env.CODEX_HOME
+  const codexHome = await mkdtemp(join(tmpdir(), "tars-codex-home-"))
+  process.env.CODEX_HOME = codexHome
+  try {
+    const aoe = new FakeAoe()
+    aoe.addError = new Error("reviewer failed")
+    aoe.addsBeforeFailure = true
+    const state = new FakeState()
+    state.path = "/tmp/tars-state/state.sqlite"
+    const roles = {
+      author: { key: "opencode", tool: "opencode" },
+      reviewer: { key: "codex", tool: "codex" },
+    }
+
+    await assert.rejects(
+      () => startLane({
+        aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
+        branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
+        planning: "not_required", openingPrompt: "start", investigationCapture: true,
+      }),
+      /reviewer failed/,
+    )
+
+    assert.deepEqual(aoe.removed, [
+      ["failed-reviewer", { purge: true, force: true }],
+      ["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
+    ])
+    assert.deepEqual(state.entries, [])
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+    else process.env.CODEX_HOME = previousCodexHome
+    await rm(codexHome, { recursive: true, force: true })
+  }
 })
 
 test("starts a planning lane with OpenCode's configured Plan agent", async () => {

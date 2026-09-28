@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { mkdir } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -17,8 +18,8 @@ export function assertCaptureSupported(roles) {
 }
 
 /** Creates per-role native evidence locations before either harness starts. */
-export async function prepareCapture({ statePath, roles }) {
-  const root = join(dirname(statePath), "native-evidence", `lane-${randomUUID()}`)
+export async function prepareCapture({ roles, codexHome = process.env.CODEX_HOME || join(homedir(), ".codex") }) {
+  const root = join(codexHome, "tars", "rollout-traces", `lane-${randomUUID()}`)
   const roleCapture = {}
   for (const [role, harness] of Object.entries(roles)) {
     if (harness.key !== "codex") {

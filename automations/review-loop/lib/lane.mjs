@@ -71,7 +71,7 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
 export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
-  const capture = investigationCapture ? await prepareCapture({ statePath: state.path, roles }) : null
+  const capture = investigationCapture ? await prepareCapture({ roles }) : null
   let author
   let reviewer
   let registered = false

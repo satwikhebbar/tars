@@ -152,6 +152,16 @@ investigation probe, add `--investigate capture`. TARS configures native
 capture before either role starts and retains only active-lane evidence
 references. It does not import, copy, or report native evidence yet.
 
+Codex's optional rollout trace bundles are written under
+`$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is
+unset, the location is `~/.codex/tars/rollout-traces/...`. This is a TARS
+convention inside Codex's home; Codex itself does not define a default root for
+optional trace bundles. Each Codex role has a separate directory, apart from
+ordinary Codex session rollouts under `$CODEX_HOME/sessions/`. OpenCode evidence
+continues to live in OpenCode's native session store. TARS does not copy these
+native records into TARS state or prune trace bundles automatically; operators
+can remove a lane directory when its evidence is no longer needed.
+
 AoE may require a one-time acknowledgement of its agent hook paths before it
 launches Codex or OpenCode sessions on this machine. If lane start reports that
 the paths have not been acknowledged, open the AoE TUI, create a temporary
