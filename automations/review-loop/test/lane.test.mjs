@@ -1,10 +1,15 @@
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
+import { promisify } from "node:util"
 import { groupForWorktree } from "../lib/aoe.mjs"
+import { openCodeServerConfig } from "../lib/investigation-capture.mjs"
 import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+
+const execFileAsync = promisify(execFile)
 
 test("groups both sessions before watching an existing pair", async () => {
   const aoe = new FakeAoe()
@@ -264,6 +269,7 @@ test("purges sessions created before a capture reviewer startup failure", async 
     aoe.addError = new Error("reviewer failed")
     aoe.addsBeforeFailure = true
     const state = new FakeState()
+    const captureRuntime = new FakeCaptureRuntime()
     state.path = "/tmp/tars-state/state.sqlite"
     const roles = {
       author: { key: "opencode", tool: "opencode" },
@@ -274,20 +280,142 @@ test("purges sessions created before a capture reviewer startup failure", async 
       () => startLane({
         aoe, state, roles, repoPath: "/repo", issue: { number: 21, title: "Capture probe" },
         branch: "issue/21-capture-probe", worktreeName: "issue-21-capture-probe", maxRounds: 5,
-        planning: "not_required", openingPrompt: "start", investigationCapture: true,
+        planning: "not_required", openingPrompt: "start", investigationCapture: true, captureRuntime,
       }),
       /reviewer failed/,
     )
 
     assert.deepEqual(aoe.removed, [
+      ["open-44", { purge: true }],
       ["failed-reviewer", { purge: true, force: true }],
-      ["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
+      ["open-attached", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }],
     ])
+    assert.deepEqual(captureRuntime.stopped, [6001])
     assert.deepEqual(state.entries, [])
   } finally {
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = previousCodexHome
     await rm(codexHome, { recursive: true, force: true })
+  }
+})
+
+test("cleans up the placeholder and worktree when native OpenCode creation fails", async (t) => {
+  const fixture = await captureGitFixture(t, "codex/capture-native-failure")
+  const captureHome = await mkdtemp(join(tmpdir(), "tars-capture-home-"))
+  t.after(() => rm(captureHome, { recursive: true, force: true }))
+  const aoe = new FakeAoe()
+  aoe.worktreePath = fixture.worktreePath
+  const state = new FakeState()
+  const runtime = new FakeCaptureRuntime()
+  runtime.createSession = async () => { throw new Error("native creation failed") }
+  await assert.rejects(startLane({
+    aoe, state, captureRuntime: runtime, captureHome, repoPath: fixture.repo,
+    issue: { number: 24, title: "Capture" }, branch: "issue/24-capture",
+    worktreeName: "issue-24-capture", maxRounds: 5, planning: "not_required",
+    openingPrompt: "start", investigationCapture: true,
+  }), /native creation failed/)
+  assert.deepEqual(runtime.stopped, [6001])
+  assert.deepEqual(aoe.removed, [["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }]])
+  assert.deepEqual(state.entries, [])
+  await assert.rejects(readFile(join(fixture.worktreePath, "README.md")), { code: "ENOENT" })
+  assert.equal((await execFileAsync("git", ["-C", fixture.repo, "branch", "--list", fixture.branch])).stdout.trim(), "")
+})
+
+test("cleans up native OpenCode evidence when author attachment fails", async (t) => {
+  const fixture = await captureGitFixture(t, "codex/capture-attach-failure")
+  const captureHome = await mkdtemp(join(tmpdir(), "tars-capture-home-"))
+  t.after(() => rm(captureHome, { recursive: true, force: true }))
+  const aoe = new FakeAoe()
+  aoe.worktreePath = fixture.worktreePath
+  aoe.attachError = new Error("attach failed")
+  const state = new FakeState()
+  const runtime = new FakeCaptureRuntime()
+  await assert.rejects(startLane({
+    aoe, state, captureRuntime: runtime, captureHome, repoPath: fixture.repo,
+    issue: { number: 25, title: "Capture" }, branch: "issue/25-capture",
+    worktreeName: "issue-25-capture", maxRounds: 5, planning: "not_required",
+    openingPrompt: "start", investigationCapture: true,
+  }), /attach failed/)
+  assert.deepEqual(runtime.stopped, [6001])
+  assert.deepEqual(aoe.removed, [["open-44", { purge: true }]])
+  assert.deepEqual(state.entries, [])
+  await assert.rejects(readFile(join(fixture.worktreePath, "README.md")), { code: "ENOENT" })
+  assert.equal((await execFileAsync("git", ["-C", fixture.repo, "branch", "--list", fixture.branch])).stdout.trim(), "")
+})
+
+test("starts two OpenCode capture roles with distinct native sessions", async (t) => {
+  const captureHome = await mkdtemp(join(tmpdir(), "tars-capture-home-"))
+  t.after(() => rm(captureHome, { recursive: true, force: true }))
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const runtime = new FakeCaptureRuntime()
+  await startLane({
+    aoe, state, captureRuntime: runtime, captureHome, repoPath: "/repo",
+    issue: { number: 26, title: "Capture" }, branch: "issue/26-capture",
+    worktreeName: "issue-26-capture", maxRounds: 5, planning: "not_required",
+    openingPrompt: "start", investigationCapture: true,
+    roles: { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "opencode", tool: "opencode" } },
+  })
+  const lane = state.entries[0]
+  assert.equal(lane.authorEvidence.nativeSessionId, "ses_1")
+  assert.equal(lane.reviewerEvidence.nativeSessionId, "ses_2")
+  assert.notEqual(lane.authorEvidence.serverPort, lane.reviewerEvidence.serverPort)
+  assert.equal(aoe.attachedCommand, "opencode attach http://127.0.0.1:4001 --session ses_1")
+  assert.equal(aoe.reviewerCommand, "opencode attach http://127.0.0.1:4002 --session ses_2")
+  assert.deepEqual(runtime.created.map(({ worktreePath }) => worktreePath), [lane.worktreePath, lane.worktreePath])
+})
+
+test("directly binds an OpenCode author to its native session in the new worktree", async (t) => {
+  const captureHome = await mkdtemp(join(tmpdir(), "tars-capture-home-"))
+  t.after(() => rm(captureHome, { recursive: true, force: true }))
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const captureRuntime = new FakeCaptureRuntime()
+  await startLane({
+    aoe, state, captureRuntime, captureHome, repoPath: "/repo", issue: { number: 22, title: "Capture" },
+    branch: "issue/22-capture", worktreeName: "issue-22-capture", maxRounds: 5,
+    planning: "required", openingPrompt: "start", investigationCapture: true,
+    authorModel: "author/model", planModel: "plan/model",
+  })
+  assert.equal(aoe.authorOptions.start, false)
+  assert.equal(aoe.attachedCommand, "opencode attach http://127.0.0.1:4001 --session ses_1")
+  assert.equal(state.entries[0].authorEvidence.nativeSessionId, "ses_1")
+  assert.equal(state.entries[0].authorEvidence.initialAgent, "tars-plan")
+  assert.equal(captureRuntime.created[0].worktreePath, aoe.worktreePath ?? "/repo--issue-44-add-calendar-export")
+  assert.equal(JSON.parse(captureRuntime.started[0].config).agent.build.model, "author/model")
+  assert.equal(JSON.parse(captureRuntime.started[0].config).agent["tars-plan"].model, "plan/model")
+})
+
+test("directly binds an OpenCode reviewer while preserving Codex author tracing", async (t) => {
+  const captureHome = await mkdtemp(join(tmpdir(), "tars-capture-home-"))
+  t.after(() => rm(captureHome, { recursive: true, force: true }))
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const captureRuntime = new FakeCaptureRuntime()
+  await startLane({
+    aoe, state, captureRuntime, captureHome, repoPath: "/repo", issue: { number: 23, title: "Capture" },
+    branch: "issue/23-capture", worktreeName: "issue-23-capture", maxRounds: 5,
+    planning: "not_required", openingPrompt: "start", investigationCapture: true,
+    roles: { author: { key: "codex", tool: "codex" }, reviewer: { key: "opencode", tool: "opencode" } },
+    reviewerModel: "review/model",
+  })
+  assert.match(aoe.command, /CODEX_ROLLOUT_TRACE_ROOT/)
+  assert.equal(aoe.reviewerCommand, "opencode attach http://127.0.0.1:4001 --session ses_1")
+  assert.equal(state.entries[0].reviewerEvidence.nativeSessionId, "ses_1")
+  assert.equal(JSON.parse(captureRuntime.started[0].config).model, "review/model")
+})
+
+test("OpenCode capture config preserves existing settings and sets role models", () => {
+  const prior = process.env.OPENCODE_CONFIG_CONTENT
+  process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { bash: "deny" }, agent: { build: { temperature: 0 } } })
+  try {
+    const config = JSON.parse(openCodeServerConfig({ model: "plan/model", agent: "tars-plan", buildModel: "build/model" }))
+    assert.deepEqual(config.permission, { bash: "deny" })
+    assert.deepEqual(config.agent.build, { temperature: 0, model: "build/model" })
+    assert.equal(config.default_agent, "tars-plan")
+  } finally {
+    if (prior === undefined) delete process.env.OPENCODE_CONFIG_CONTENT
+    else process.env.OPENCODE_CONFIG_CONTENT = prior
   }
 })
 
@@ -416,6 +544,65 @@ test("closes an approved lane through AoE before deleting its worktree", async (
     ["open-44", { deleteWorktree: true, deleteBranch: true, force: false, purge: true }],
   ])
   assert.equal(state.lane(worktreePath), null)
+})
+
+test("closes a capture lane when AoE retains its custom-command worktree", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-capture-close-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const repo = join(root, "repo")
+  const worktreePath = join(root, "worktree")
+  const git = (...args) => execFileAsync("git", args)
+  await mkdir(repo)
+  await git("init", "-q", repo)
+  await writeFile(join(repo, "README.md"), "fixture\n")
+  await git("-C", repo, "add", ".")
+  await git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "init")
+  await git("-C", repo, "worktree", "add", "-qb", "codex/capture-test", worktreePath)
+  await git("-C", repo, "worktree", "lock", "--reason", "aoe-managed worktree", worktreePath)
+  const aoe = new FakeAoe()
+  aoe.sessions = [{ id: "author", path: worktreePath, tool: "opencode" }, { id: "reviewer", path: worktreePath, tool: "codex" }]
+  const state = new FakeState()
+  state.saveLane({
+    worktreePath, authorSessionId: "author", reviewerSessionId: "reviewer",
+    authorTool: "opencode", reviewerTool: "codex", authorHarness: "opencode",
+    investigationCapture: "capture", state: "approved",
+  })
+  await closeLane({ aoe, state, worktreePath })
+  await assert.rejects(() => readFile(join(worktreePath, "README.md")), { code: "ENOENT" })
+  const branches = (await git("-C", repo, "branch", "--list", "codex/capture-test")).stdout
+  assert.equal(branches.trim(), "")
+  assert.equal(state.lane(worktreePath), null)
+})
+
+test("refuses to close a dirty capture worktree without force and retains lane evidence", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-capture-dirty-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const repo = join(root, "repo")
+  const worktreePath = join(root, "worktree")
+  const git = (...args) => execFileAsync("git", args)
+  await mkdir(repo)
+  await git("init", "-q", repo)
+  await writeFile(join(repo, "README.md"), "fixture\n")
+  await git("-C", repo, "add", ".")
+  await git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "init")
+  await git("-C", repo, "worktree", "add", "-qb", "codex/capture-dirty", worktreePath)
+  await git("-C", repo, "worktree", "lock", "--reason", "aoe-managed worktree", worktreePath)
+  await writeFile(join(worktreePath, "README.md"), "dirty\n")
+  const aoe = new FakeAoe()
+  aoe.sessions = [{ id: "author", path: worktreePath, tool: "opencode" }, { id: "reviewer", path: worktreePath, tool: "codex" }]
+  const state = new FakeState()
+  const evidence = { status: "available", harness: "opencode", nativeSessionId: "ses_existing", serverPort: 4188, serverPid: 700 }
+  state.saveLane({
+    worktreePath, authorSessionId: "author", reviewerSessionId: "reviewer",
+    authorTool: "opencode", reviewerTool: "codex", authorHarness: "opencode",
+    investigationCapture: "capture", authorEvidence: evidence, state: "approved",
+  })
+  await assert.rejects(closeLane({ aoe, state, worktreePath }), /modified|untracked|force/i)
+  assert.equal(await readFile(join(worktreePath, "README.md"), "utf8"), "dirty\n")
+  assert.match((await git("-C", repo, "branch", "--list", "codex/capture-dirty")).stdout, /codex\/capture-dirty/)
+  assert.equal(state.lane(worktreePath).authorEvidence.nativeSessionId, "ses_existing")
+  assert.deepEqual(aoe.removed, [])
+  assert.deepEqual(aoe.deletedGroups, [])
 })
 
 test("closes an approved lane temporarily masked by an invalid stale handoff", async () => {
@@ -574,6 +761,49 @@ test("restarts a stopped live reviewer without attempting a trash restore", asyn
   assert.deepEqual(aoe.started, ["codex-44"])
 })
 
+test("recovers a stopped capture OpenCode session with its recorded native ID", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo-worktrees/issue-44-add-calendar-export"
+  const evidence = { status: "available", harness: "opencode", nativeSessionId: "ses_existing", serverPort: 4188, serverPid: 700, initialAgent: "build" }
+  state.saveLane({
+    worktreePath, authorSessionId: "open-44", reviewerSessionId: "codex-44",
+    authorTool: "opencode", reviewerTool: "codex", authorHarness: "opencode",
+    investigationCapture: "capture", authorEvidence: evidence, state: "watching", maxRounds: 5,
+  })
+  aoe.sessions = [{ id: "open-44", path: worktreePath, tool: "opencode" }, { id: "codex-44", path: worktreePath, tool: "codex" }]
+  aoe.runtime = [{ session: "open-44", state: "dead" }]
+  const captureRuntime = new FakeCaptureRuntime()
+  let checks = 0
+  captureRuntime.hasSession = async () => ++checks > 1
+  const result = await recoverLane({ aoe, state, worktreePath, role: "author", captureRuntime })
+  assert.equal(result.started, true)
+  assert.equal(state.entries.at(-1).authorEvidence.nativeSessionId, "ses_existing")
+  assert.equal(state.entries.at(-1).authorEvidence.serverPort, 4188)
+  assert.equal(captureRuntime.started[0].port, 4188)
+  assert.deepEqual(aoe.started, ["open-44"])
+})
+
+test("refuses capture recovery when the recorded native ID cannot be restored", async () => {
+  const aoe = new FakeAoe()
+  const state = new FakeState()
+  const worktreePath = "/repo-worktrees/issue-44-add-calendar-export"
+  const evidence = { status: "available", harness: "opencode", nativeSessionId: "ses_existing", serverPort: 4188, serverPid: 700 }
+  state.saveLane({
+    worktreePath, authorSessionId: "open-44", reviewerSessionId: "codex-44",
+    authorTool: "opencode", reviewerTool: "codex", authorHarness: "opencode",
+    investigationCapture: "capture", authorEvidence: evidence, state: "watching", maxRounds: 5,
+  })
+  aoe.sessions = [{ id: "open-44", path: worktreePath, tool: "opencode" }, { id: "codex-44", path: worktreePath, tool: "codex" }]
+  aoe.runtime = [{ session: "open-44", state: "dead" }]
+  const runtime = new FakeCaptureRuntime()
+  runtime.hasSession = async () => false
+  await assert.rejects(recoverLane({ aoe, state, worktreePath, role: "author", captureRuntime: runtime }), /unavailable after restarting/)
+  assert.deepEqual(aoe.started, [])
+  assert.equal(state.lane(worktreePath).authorEvidence.nativeSessionId, "ses_existing")
+  assert.deepEqual(runtime.stopped, [6001])
+})
+
 test("does not rewrite a valid or unknown trashed git pointer", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "tars-recovery-"))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -637,6 +867,22 @@ test("resolves exactly one conventionally named issue lane", () => {
   assert.throws(() => worktreeForIssue(state, 44), /Found 2 registered lanes/)
 })
 
+async function captureGitFixture(t, branch) {
+  const root = await mkdtemp(join(tmpdir(), "tars-capture-failure-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const repo = join(root, "repo")
+  const worktreePath = join(root, "worktree")
+  const git = (...args) => execFileAsync("git", args)
+  await mkdir(repo)
+  await git("init", "-q", repo)
+  await writeFile(join(repo, "README.md"), "fixture\n")
+  await git("-C", repo, "add", ".")
+  await git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "init")
+  await git("-C", repo, "worktree", "add", "-qb", branch, worktreePath)
+  await git("-C", repo, "worktree", "lock", "--reason", "aoe-managed worktree", worktreePath)
+  return { repo, worktreePath, branch }
+}
+
 class FakeAoe {
   constructor() {
     this.added = []
@@ -675,6 +921,14 @@ class FakeAoe {
     this.reviewerOptions = { extraArgs, group }
     this.reviewerCommand = command
     return { id: "codex-44", path }
+  }
+
+  async attachWorktreeSession(_repo, _branch, _title, command) {
+    this.attachedCommand = command
+    if (this.attachError) throw this.attachError
+    const path = this.worktreePath ?? "/repo--issue-44-add-calendar-export"
+    this.sessions.push({ id: "open-attached", path, tool: "opencode" })
+    return { id: "open-attached", path }
   }
 
   async moveSessionToGroup(sessionId, group) {
@@ -736,4 +990,22 @@ class FakeState {
   deleteLane(worktreePath) {
     this.entries = this.entries.filter((lane) => lane.worktreePath !== worktreePath)
   }
+}
+
+class FakeCaptureRuntime {
+  constructor() {
+    this.created = []
+    this.started = []
+    this.stopped = []
+  }
+  async availablePort() { return 4001 + this.started.length }
+  async startServer(options) {
+    this.started.push(options)
+    return 6001 + this.started.length - 1
+  }
+  async createSession(options) {
+    this.created.push(options)
+    return { id: `ses_${this.created.length}`, directory: options.worktreePath }
+  }
+  async stopServer(pid) { this.stopped.push(pid) }
 }

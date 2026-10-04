@@ -162,6 +162,16 @@ continues to live in OpenCode's native session store. TARS does not copy these
 native records into TARS state or prune trace bundles automatically; operators
 can remove a lane directory when its evidence is no longer needed.
 
+For a capture-enabled OpenCode role, TARS starts a loopback OpenCode server in
+the lane worktree, creates the native session through its API, and launches AoE
+with an attach command for that exact session ID. The ID, server port, and
+process ID are stored only in the active lane row. `tars lane recover` starts a
+stopped server on the recorded port before restarting the AoE session.
+`tars lane resume --create-sessions` creates a new native session for a
+missing role and retains its earlier IDs in the active lane row. Closing the
+lane stops these loopback servers; OpenCode's native session history remains in
+OpenCode's own store.
+
 AoE may require a one-time acknowledgement of its agent hook paths before it
 launches Codex or OpenCode sessions on this machine. If lane start reports that
 the paths have not been acknowledged, open the AoE TUI, create a temporary

@@ -1,8 +1,35 @@
 import assert from "node:assert/strict"
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { AoeClient, agentLabelFromCapture, createPair, discoverPair, findActiveWorktreeSession, groupForWorktree, parseTrashedSessionIds, validatePair, waitForSessionReady } from "../lib/aoe.mjs"
 
 const WORKTREE = "/tmp/kipp-review"
+
+test("uses mutually exclusive AoE command flags for captured OpenCode and Codex sessions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-aoe-args-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const command = join(root, "aoe-fixture")
+  const log = join(root, "args.jsonl")
+  await writeFile(command, `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n")\n`)
+  await chmod(command, 0o755)
+  const makeClient = (tool) => {
+    const client = new AoeClient(command)
+    let calls = 0
+    client.listSessions = async () => ++calls === 1 ? [] : [{ id: `${tool}-new`, path: WORKTREE, tool }]
+    client.startSession = async () => {}
+    return client
+  }
+  const attach = "opencode attach http://127.0.0.1:4188 --session ses_native1"
+  await makeClient("opencode").addSession(WORKTREE, "opencode", "Reviewer", { command: attach, group: "TARS/test" })
+  await makeClient("codex").addSession(WORKTREE, "codex", "Reviewer", { command: "env CODEX_ROLLOUT_TRACE_ROOT='/tmp/traces' codex" })
+  await makeClient("opencode").attachWorktreeSession("/repo", "issue/1", "Author", attach, { group: "TARS/test" })
+  const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line))
+  assert.deepEqual(calls[0], ["add", WORKTREE, "--cmd", attach, "--title", "Reviewer", "--group", "TARS/test"])
+  assert.deepEqual(calls[1], ["add", WORKTREE, "--tool", "codex", "--title", "Reviewer", "--cmd-override", "env CODEX_ROLLOUT_TRACE_ROOT='/tmp/traces' codex"])
+  assert.deepEqual(calls[2], ["add", "/repo", "--worktree", "issue/1", "--cmd", attach, "--title", "Author", "--group", "TARS/test"])
+})
 
 test("discovers exactly one pair from the requested worktree", async () => {
   const pair = await discoverPair(new ListAoe(sessions()), WORKTREE)

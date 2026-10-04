@@ -77,19 +77,19 @@ export class AoeClient {
 
   async addSession(worktreePath, tool, title, { extraArgs = [], group, command } = {}) {
     const before = await this.listSessions()
-    const args = ["add", worktreePath, "--tool", tool, "--title", title]
+    const args = ["add", worktreePath, ...(command?.startsWith("opencode attach ") ? ["--cmd", command] : ["--tool", tool]), "--title", title]
     if (extraArgs.length) args.push("--extra-args", extraArgs.join(" "))
     if (group) args.push("--group", group)
-    // AoE treats --cmd as an alternative to --tool. Use --cmd-override so
-    // traced sessions retain their configured harness and session identity.
-    if (command) args.push("--cmd-override", command)
+    // AoE recognizes an OpenCode attach command as OpenCode. Its --cmd and
+    // --tool flags are mutually exclusive; Codex trace overrides use --tool.
+    if (command && !command.startsWith("opencode attach ")) args.push("--cmd-override", command)
     await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
     await this.startSession(session.id)
     return session
   }
 
-  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command } = {}) {
+  async createWorktreeSession(repoPath, branch, title, { tool = "opencode", extraArgs = [], group, command, start = true } = {}) {
     const before = await this.listSessions()
     const args = [
       "add",
@@ -109,6 +109,17 @@ export class AoeClient {
     if (command) args.push("--cmd-override", command)
     await execFileAsync(this.command, args)
     const session = await this.findNewSession(before, tool)
+    if (start) await this.startSession(session.id)
+    return session
+  }
+
+  /** Adopts a worktree retained after its unstarted placeholder is removed. */
+  async attachWorktreeSession(repoPath, branch, title, command, { group } = {}) {
+    const before = await this.listSessions()
+    const args = ["add", repoPath, "--worktree", branch, "--cmd", command, "--title", title]
+    if (group) args.push("--group", group)
+    await execFileAsync(this.command, args)
+    const session = await this.findNewSession(before, "opencode")
     await this.startSession(session.id)
     return session
   }

@@ -1,7 +1,11 @@
 import { access, readFile, rm, writeFile } from "node:fs/promises"
+import { execFile } from "node:child_process"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import { promisify } from "node:util"
 import { groupForWorktree } from "./aoe.mjs"
-import { attributeOpenCodeSession, captureLaunchCommand, prepareCapture } from "./investigation-capture.mjs"
+import { captureLaunchCommand, createOpenCodeEvidence, ensureOpenCodeServer, openCodeAttachCommand, prepareCapture, stopOpenCodeServer } from "./investigation-capture.mjs"
+
+const execFileAsync = promisify(execFile)
 
 /** Starts watching an existing pair after placing both role-bound sessions in its lane group. */
 export async function startExistingLane({ aoe, state, worktreePath, pair, roles, maxRounds }) {
@@ -69,34 +73,44 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false, captureRuntime, captureHome }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
-  const capture = investigationCapture ? await prepareCapture({ roles }) : null
+  const capture = investigationCapture ? await prepareCapture({ roles, codexHome: captureHome }) : null
   let author
   let reviewer
+  let worktreePath
   let registered = false
   try {
     author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
       tool: roles.author.tool,
       // tars-plan is an OpenCode agent. Other harnesses still receive the
       // role-level planning prompt, but must not be passed OpenCode CLI flags.
-      extraArgs: [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
+      extraArgs: capture && roles.author.key === "opencode" ? [] : [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
       command: captureLaunchCommand(roles.author, capture?.roles.author),
       requireNew: investigationCapture,
+      start: !(capture && roles.author.key === "opencode"),
     })
-    const worktreePath = author.path
+    worktreePath = author.path
     const group = groupForWorktree(worktreePath)
     await provision?.(worktreePath)
-    await aoe.moveSessionToGroup(author.id, group)
-    reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
-      extraArgs: [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
-      group,
-      command: captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
-    })
-    if (capture) {
-      await attributeOpenCodeRole("author", author.id, roles.author, capture, aoe)
-      await attributeOpenCodeRole("reviewer", reviewer.id, roles.reviewer, capture, aoe)
+    if (capture && roles.author.key === "opencode") {
+      capture.roles.author = await createOpenCodeEvidence({
+        worktreePath, role: "author", model: authorModel,
+        agent: planning === "required" ? "tars-plan" : "build", buildModel: authorModel, planModel, runtime: captureRuntime,
+      })
+      await aoe.removeSession(author.id, { purge: true })
+      author = null
+      author = await aoe.attachWorktreeSession(repoPath, branch, worktreeName, openCodeAttachCommand(capture.roles.author), { group })
     }
+    await aoe.moveSessionToGroup(author.id, group)
+    if (capture && roles.reviewer.key === "opencode") {
+      capture.roles.reviewer = await createOpenCodeEvidence({ worktreePath, role: "reviewer", model: reviewerModel, agent: "build", buildModel: reviewerModel, runtime: captureRuntime })
+    }
+    reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
+      extraArgs: capture && roles.reviewer.key === "opencode" ? [] : [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
+      group,
+      command: roles.reviewer.key === "opencode" && capture ? openCodeAttachCommand(capture.roles.reviewer) : captureLaunchCommand(roles.reviewer, capture?.roles.reviewer),
+    })
     state.saveLane({
       worktreePath,
       authorSessionId: author.id,
@@ -124,23 +138,25 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     await aoe.send(author.id, openingPrompt)
     return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
   } catch (error) {
-    if (capture && !registered) await cleanupFailedCaptureStart({ aoe, author, reviewer, capture })
+    if (capture && !registered) await cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime })
     throw error
   }
 }
 
-async function cleanupFailedCaptureStart({ aoe, author, reviewer, capture }) {
+async function cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime }) {
   // AoE creates a session record before starting its terminal. If start fails,
   // addSession() throws before it can return that reviewer to us. Discover it
   // from this freshly-created worktree and remove it before its owner, whose
   // removal releases the worktree and branch.
-  const related = author
+  const related = worktreePath
     ? await aoe.listSessions().catch(() => [])
     : []
   const sessionIds = new Set([
     ...(reviewer ? [reviewer.id] : []),
-    ...related.filter((session) => session.path === author.path && session.id !== author.id).map((session) => session.id),
+    ...related.filter((session) => session.path === worktreePath && session.id !== author?.id).map((session) => session.id),
   ])
+  const orphanOwner = !author ? [...sessionIds].shift() : null
+  if (orphanOwner) sessionIds.delete(orphanOwner)
   for (const sessionId of sessionIds) {
     await aoe.removeSession(sessionId, { purge: true, force: true }).catch(() => {})
   }
@@ -152,16 +168,16 @@ async function cleanupFailedCaptureStart({ aoe, author, reviewer, capture }) {
       purge: true,
     }).catch(() => {})
   }
-  await rm(capture.root, { recursive: true, force: true }).catch(() => {})
-}
-
-async function attributeOpenCodeRole(role, sessionId, harness, capture, aoe) {
-  if (harness.key !== "opencode") return
-  try {
-    capture.roles[role] = await attributeOpenCodeSession({ aoe, aoeSessionId: sessionId, role })
-  } catch (error) {
-    capture.roles[role] = { status: "unavailable", harness: "opencode", reason: `OpenCode launch handshake failed: ${error.message}` }
+  if (orphanOwner) {
+    await aoe.removeSession(orphanOwner, { deleteWorktree: true, deleteBranch: true, force: true, purge: true }).catch(() => {})
+  } else if (!author && worktreePath && repoPath && branch) {
+    await execFileAsync("git", ["-C", repoPath, "worktree", "remove", "--force", worktreePath]).catch(() => {})
+    await execFileAsync("git", ["-C", repoPath, "branch", "-D", branch]).catch(() => {})
   }
+  if (worktreePath) await removeRetainedCaptureWorktree(worktreePath, { force: true }).catch(() => {})
+  await stopOpenCodeServer(capture.roles.author, captureRuntime).catch(() => {})
+  await stopOpenCodeServer(capture.roles.reviewer, captureRuntime).catch(() => {})
+  await rm(capture.root, { recursive: true, force: true }).catch(() => {})
 }
 
 function modelArgs(model) {
@@ -184,7 +200,12 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
   const expectedIds = new Set([lane.authorSessionId, lane.reviewerSessionId])
   const trashedIds = await aoe.listTrashedSessionIds?.() ?? new Set()
   if ([...expectedIds].every((sessionId) => trashedIds.has(sessionId))) {
+    if (lane.investigationCapture === "capture" && lane.authorHarness === "opencode") {
+      await removeRetainedCaptureWorktree(worktreePath, { force })
+    }
     await aoe.deleteGroup(groupForWorktree(worktreePath))
+    await stopOpenCodeServer(lane.authorEvidence)
+    await stopOpenCodeServer(lane.reviewerEvidence)
     state.deleteLane(worktreePath)
     return lane
   }
@@ -206,6 +227,14 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
     throw new Error(`AoE session ${reviewer.id} is no longer the registered reviewer session for ${worktreePath}.`)
   }
   if (!author && !reviewer) {
+    if (lane.investigationCapture === "capture" && lane.authorHarness === "opencode" && await pathExists(worktreePath)) {
+      await removeRetainedCaptureWorktree(worktreePath, { force })
+      await aoe.deleteGroup(groupForWorktree(worktreePath))
+      await stopOpenCodeServer(lane.authorEvidence)
+      await stopOpenCodeServer(lane.reviewerEvidence)
+      state.deleteLane(worktreePath)
+      return lane
+    }
     throw new Error(
       `Neither registered AoE session exists for ${worktreePath}; cannot safely release its worktree lock.`,
     )
@@ -213,6 +242,11 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
 
   if (force) {
     await assertStoppedDeadSessions(aoe, [lane.authorSessionId, lane.reviewerSessionId])
+  }
+
+  if (!force && lane.investigationCapture === "capture" && lane.authorHarness === "opencode" && await pathExists(worktreePath)) {
+    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "status", "--porcelain", "--untracked-files=all"])
+    if (stdout.trim()) throw new Error(`Refusing to close ${worktreePath}: worktree has modified or untracked files; commit them or use --force.`)
   }
 
   // TARS owns both sessions. Purge instead of leaving linked worktrees in
@@ -226,9 +260,25 @@ export async function closeLane({ aoe, state, worktreePath, force = false }) {
     force,
     purge: true,
   })
+  if (lane.investigationCapture === "capture" && lane.authorHarness === "opencode") {
+    await removeRetainedCaptureWorktree(worktreePath, { force })
+  }
   await aoe.deleteGroup(groupForWorktree(worktreePath))
+  await stopOpenCodeServer(lane.authorEvidence)
+  await stopOpenCodeServer(lane.reviewerEvidence)
   state.deleteLane(worktreePath)
   return lane
+}
+
+/** AoE can retain a worktree when its OpenCode owner was recreated with --cmd. */
+async function removeRetainedCaptureWorktree(worktreePath, { force }) {
+  if (!await pathExists(worktreePath)) return
+  const { stdout: common } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--git-common-dir"])
+  const gitDir = isAbsolute(common.trim()) ? common.trim() : resolve(worktreePath, common.trim())
+  const { stdout: branch } = await execFileAsync("git", ["-C", worktreePath, "symbolic-ref", "--quiet", "--short", "HEAD"])
+  await execFileAsync("git", ["--git-dir", gitDir, "worktree", "unlock", worktreePath]).catch(() => {})
+  await execFileAsync("git", ["--git-dir", gitDir, "worktree", "remove", ...(force ? ["--force"] : []), worktreePath])
+  await execFileAsync("git", ["--git-dir", gitDir, "branch", "-D", branch.trim()])
 }
 
 /**
@@ -245,7 +295,7 @@ function isApprovedForRetirement(lane) {
  * The operator must explicitly resume/re-deliver a task afterwards, so recovery
  * cannot duplicate a push, pull-request operation, or handoff.
  */
-export async function recoverLane({ aoe, state, worktreePath, role }) {
+export async function recoverLane({ aoe, state, worktreePath, role, captureRuntime }) {
   const lane = normalizeLane(state.lane(worktreePath))
   if (!lane) throw new Error(`No registered lane for ${worktreePath}.`)
   if (role !== "author" && role !== "reviewer") throw new Error("lane recover requires --role author or --role reviewer.")
@@ -279,6 +329,14 @@ export async function recoverLane({ aoe, state, worktreePath, role }) {
   await aoe.moveSessionToGroup(sessionId, groupForWorktree(worktreePath))
   const runtime = (await aoe.runtimeSessions({ includeDead: true })).find((entry) => entry.session === sessionId)
   const started = runtime?.state !== "running"
+  if (started && lane.investigationCapture === "capture") {
+    const evidenceKey = role === "author" ? "authorEvidence" : "reviewerEvidence"
+    const refreshed = await ensureOpenCodeServer({ evidence: lane[evidenceKey], worktreePath, runtime: captureRuntime })
+    if (refreshed !== lane[evidenceKey]) {
+      lane[evidenceKey] = refreshed
+      state.saveLane(lane)
+    }
+  }
   if (started) await aoe.startSession(sessionId)
   return { lane, sessionId, role, restored: trashed, started }
 }

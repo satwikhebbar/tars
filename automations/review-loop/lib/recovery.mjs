@@ -1,4 +1,5 @@
 import { groupForWorktree } from "./aoe.mjs"
+import { captureLaunchCommand, createOpenCodeEvidence, openCodeAttachCommand, stopOpenCodeServer } from "./investigation-capture.mjs"
 import {
   ACTIVE_STATES,
   classifyEvent,
@@ -193,7 +194,7 @@ function pendingVerdict(analysis, lane, event, session, dispatched) {
  * or `createSessions` is set, and each flag enables exactly one recovery action
  * only when the evidence supports it.
  */
-export async function resumeLane({ aoe, state, worktreePath, dispatch = false, createSessions = false }) {
+export async function resumeLane({ aoe, state, worktreePath, dispatch = false, createSessions = false, captureRuntime }) {
   let analysis = await analyzeLane({ aoe, state, worktreePath })
 
   if (createSessions) {
@@ -202,7 +203,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
         `Refusing --create-sessions: verdict is ${analysis.verdict}, not sessions_missing. ${analysis.reasons.join("; ")}`,
       )
     }
-    await recreateMissingSessions({ aoe, state, lane: analysis.lane })
+    await recreateMissingSessions({ aoe, state, lane: analysis.lane, captureRuntime })
     analysis = await analyzeLane({ aoe, state, worktreePath })
   }
 
@@ -241,7 +242,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
   }
 }
 
-async function recreateMissingSessions({ aoe, state, lane }) {
+async function recreateMissingSessions({ aoe, state, lane, captureRuntime }) {
   const sessions = await aoe.listSessions()
   const suffix = lane.worktreePath.split("/").filter(Boolean).at(-1) ?? "worktree"
   const group = groupForWorktree(lane.worktreePath)
@@ -255,25 +256,63 @@ async function recreateMissingSessions({ aoe, state, lane }) {
       session.id === lane.reviewerSessionId && session.path === lane.worktreePath && session.tool === lane.reviewerTool,
   )
   if (!authorValid) {
-    const author = await aoe.addSession(lane.worktreePath, lane.authorTool, `Review loop author resume (${suffix})`, {
-      extraArgs: recoveryModelArgs(lane, "author"),
-      group,
-    })
-    updated.authorSessionId = author.id
+    const previous = updated.authorEvidence
+    const options = await replacementOptions(updated, "author", captureRuntime)
+    const before = new Set((await aoe.listSessions()).map((session) => session.id))
+    try {
+      const author = await aoe.addSession(lane.worktreePath, lane.authorTool, `Review loop author resume (${suffix})`, { ...options, group })
+      updated.authorSessionId = author.id
+      state.saveLane(updated)
+      await stopOpenCodeServer(previous, captureRuntime)
+    } catch (error) {
+      await removeFailedReplacement(aoe, lane.worktreePath, lane.authorTool, before)
+      await stopOpenCodeServer(updated.authorEvidence, captureRuntime)
+      throw error
+    }
   }
   if (!reviewerValid) {
-    const reviewer = await aoe.addSession(
-      lane.worktreePath,
-      lane.reviewerTool,
-      `Review loop reviewer resume (${suffix})`,
-      {
-        extraArgs: recoveryModelArgs(lane, "reviewer"),
-        group,
-      },
-    )
-    updated.reviewerSessionId = reviewer.id
+    const previous = updated.reviewerEvidence
+    const options = await replacementOptions(updated, "reviewer", captureRuntime)
+    const before = new Set((await aoe.listSessions()).map((session) => session.id))
+    try {
+      const reviewer = await aoe.addSession(lane.worktreePath, lane.reviewerTool, `Review loop reviewer resume (${suffix})`, { ...options, group })
+      updated.reviewerSessionId = reviewer.id
+      state.saveLane(updated)
+      await stopOpenCodeServer(previous, captureRuntime)
+    } catch (error) {
+      await removeFailedReplacement(aoe, lane.worktreePath, lane.reviewerTool, before)
+      await stopOpenCodeServer(updated.reviewerEvidence, captureRuntime)
+      throw error
+    }
   }
-  state.saveLane(updated)
+}
+
+async function removeFailedReplacement(aoe, worktreePath, tool, before) {
+  const created = (await aoe.listSessions().catch(() => [])).filter(
+    (session) => session.path === worktreePath && session.tool === tool && !before.has(session.id),
+  )
+  for (const session of created) await aoe.removeSession(session.id, { purge: true, force: true }).catch(() => {})
+}
+
+async function replacementOptions(lane, role, captureRuntime) {
+  const harness = lane[`${role}Harness`] ?? lane[`${role}Tool`]
+  const evidenceKey = `${role}Evidence`
+  if (lane.investigationCapture !== "capture") return { extraArgs: recoveryModelArgs(lane, role) }
+  if (harness === "codex") {
+    return { extraArgs: recoveryModelArgs(lane, role), command: captureLaunchCommand({ key: "codex" }, lane[evidenceKey]) }
+  }
+  if (harness !== "opencode") throw new Error(`Cannot replace capture-enabled ${role} session for ${harness}.`)
+  const previous = lane[evidenceKey]
+  const planning = role === "author" && lane.phase === "planning"
+  const model = role === "author" ? lane.authorModel : lane.reviewerModel
+  const evidence = await createOpenCodeEvidence({
+    worktreePath: lane.worktreePath, role, model, agent: planning ? "tars-plan" : "build",
+    buildModel: role === "author" ? lane.authorModel : lane.reviewerModel,
+    planModel: planning ? lane.planModel : null, runtime: captureRuntime,
+  })
+  const { previous: history = [], ...priorSession } = previous ?? {}
+  lane[evidenceKey] = { ...evidence, previous: previous ? [...history, priorSession] : [] }
+  return { extraArgs: [], command: openCodeAttachCommand(evidence) }
 }
 
 function recoveryModelArgs(lane, role) {

@@ -275,6 +275,56 @@ test("a missing registered session reports sessions_missing and --create-session
   fixture.state.close()
 })
 
+test("replaces a missing capture OpenCode role with a new native ID and retains prior attribution", async () => {
+  const fixture = await laneFixture()
+  const prior = { status: "available", harness: "opencode", nativeSessionId: "ses_old", serverPort: 4001, serverPid: 801 }
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), investigationCapture: "capture", authorEvidence: prior })
+  fixture.aoe.sessions = fixture.aoe.sessions.filter((session) => session.id !== "opencode-1")
+  fixture.aoe.runtime = fixture.aoe.runtime.filter((entry) => entry.session !== "opencode-1")
+  const runtime = {
+    stopped: [],
+    async availablePort() { return 4002 },
+    async startServer() { return 802 },
+    async createSession({ worktreePath }) { return { id: "ses_new", directory: worktreePath } },
+    async stopServer(pid) { this.stopped.push(pid) },
+  }
+  await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime })
+  const lane = fixture.state.lane(fixture.worktree)
+  assert.equal(lane.authorEvidence.nativeSessionId, "ses_new")
+  assert.equal(lane.authorEvidence.previous[0].nativeSessionId, "ses_old")
+  assert.equal(fixture.aoe.addedSessions[0].options.command, "opencode attach http://127.0.0.1:4002 --session ses_new")
+  assert.deepEqual(runtime.stopped, [801])
+  fixture.state.close()
+})
+
+test("failed capture replacement removes its AoE session and new server while retaining old attribution", async () => {
+  const fixture = await laneFixture()
+  const prior = { status: "available", harness: "opencode", nativeSessionId: "ses_old", serverPort: 4001, serverPid: 801 }
+  fixture.state.saveLane({ ...fixture.state.lane(fixture.worktree), investigationCapture: "capture", authorEvidence: prior })
+  fixture.aoe.sessions = fixture.aoe.sessions.filter((session) => session.id !== "opencode-1")
+  fixture.aoe.runtime = fixture.aoe.runtime.filter((entry) => entry.session !== "opencode-1")
+  const removed = []
+  fixture.aoe.removeSession = async (id, options) => { removed.push([id, options]); fixture.aoe.sessions = fixture.aoe.sessions.filter((session) => session.id !== id) }
+  const originalAdd = fixture.aoe.addSession.bind(fixture.aoe)
+  fixture.aoe.addSession = async (...args) => { await originalAdd(...args); throw new Error("replacement startup failed") }
+  const runtime = {
+    stopped: [],
+    async availablePort() { return 4002 },
+    async startServer() { return 802 },
+    async createSession({ worktreePath }) { return { id: "ses_new", directory: worktreePath } },
+    async stopServer(pid) { this.stopped.push(pid) },
+  }
+  await assert.rejects(
+    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime }),
+    /replacement startup failed/,
+  )
+  assert.deepEqual(removed, [["opencode-new-1", { purge: true, force: true }]])
+  assert.deepEqual(runtime.stopped, [802])
+  assert.equal(fixture.state.lane(fixture.worktree).authorEvidence.nativeSessionId, "ses_old")
+  assert.equal(fixture.state.lane(fixture.worktree).authorSessionId, "opencode-1")
+  fixture.state.close()
+})
+
 test("a session id reused by another worktree reports sessions_missing and is replaced only by --create-sessions", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
@@ -597,9 +647,9 @@ class FakeAoe {
     this.sent.push({ sessionId, message })
   }
 
-  async addSession(worktreePath, tool, title) {
+  async addSession(worktreePath, tool, title, options) {
     const id = `${tool}-new-${this.addedSessions.length + 1}`
-    this.addedSessions.push({ id, path: worktreePath, tool, title })
+    this.addedSessions.push({ id, path: worktreePath, tool, title, options })
     this.sessions.push({ id, path: worktreePath, tool })
     this.runtime.push({ session: id, substrate: "tmux", state: "waiting" })
     return { id, path: worktreePath, tool, title }

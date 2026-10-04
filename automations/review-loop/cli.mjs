@@ -312,6 +312,7 @@ function laneAoe(client) {
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title, options) => client.addSession(worktreePath, tool, title, options),
+    attachWorktreeSession: (repoPath, branch, title, command, options) => client.attachWorktreeSession(repoPath, branch, title, command, options),
     moveSessionToGroup: (sessionId, group) => client.moveSessionToGroup(sessionId, group),
     deleteGroup: (group) => client.deleteGroup(group),
     send: (sessionId, message) => client.send(sessionId, message),
