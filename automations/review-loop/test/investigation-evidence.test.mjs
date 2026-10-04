@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, readdir, stat, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -65,6 +65,83 @@ test("rejects a lane that becomes busy while native sources are collected", asyn
   }
   await assert.rejects(inspectLaneEvidence({ ...f, worktreePath: path }), /author.*idle or waiting/)
   assert.equal(checks, 2)
+})
+
+test("rejects missing and dead AoE sessions before inspecting evidence", async () => {
+  for (const runtime of [
+    [{ session: lane.authorSessionId, state: "idle" }],
+    [{ session: lane.authorSessionId, state: "idle" }, { session: lane.reviewerSessionId, state: "dead" }],
+  ]) {
+    let inspections = 0
+    const f = fixture({ sources: { inspect: async () => { inspections += 1 } } })
+    f.aoe.runtimeSessions = async () => runtime
+    await assert.rejects(inspectLaneEvidence({ ...f, worktreePath: path }), /reviewer.*idle or waiting/)
+    assert.equal(inspections, 0)
+  }
+})
+
+test("reports a failed Codex bundle without losing a successful bundle", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tars-test-traces-"))
+  const outputs = []
+  try {
+    for (const name of ["bundle-a", "bundle-b"]) {
+      await mkdir(join(root, name))
+      await writeFile(join(root, name, "manifest.json"), "{}")
+    }
+    const sources = createNativeSources(async (_command, args, output) => {
+      outputs.push(output)
+      if (args[2].endsWith("bundle-b")) throw new Error("reducer failed")
+      await writeFile(output, "reduced")
+    })
+    const result = await sources.inspect({ harness: "codex", evidence: { ...lane.reviewerEvidence, traceRoot: root } })
+    assert.equal(result.status, "partial")
+    assert.equal(result.bundleCount, 2)
+    assert.equal(result.reducedBytes, 7)
+    assert.match(result.gaps[0], /bundle-b: reducer failed/)
+    assert.equal(result.gaps.length, 1)
+    await assert.rejects(readdir(join(outputs[0], "..")), /ENOENT/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("invalid OpenCode exports become a role gap without hiding reviewer evidence", async () => {
+  for (const [name, payload, reason] of [
+    ["empty", "", /OpenCode export was empty/],
+    ["malformed", "{", /JSON/],
+    ["wrong session", '{"info":{"id":"ses_other"},"messages":[]}', /does not match native session/],
+    ["missing messages", '{"info":{"id":"ses_123"}}', /does not match native session/],
+  ]) {
+    const outputs = []
+    const sources = createNativeSources(async (_command, _args, output) => {
+      outputs.push(output)
+      await writeFile(output, payload)
+    })
+    const f = fixture({ sources: { inspect: ({ role }) => role === "author"
+      ? sources.inspect({ harness: "opencode", evidence: lane.authorEvidence })
+      : Promise.resolve({ status: "available", reducedBytes: 9 }) } })
+    const result = await inspectLaneEvidence({ ...f, worktreePath: path })
+    assert.equal(result.roles.author.status, "unavailable", name)
+    assert.match(result.roles.author.reason, reason, name)
+    assert.equal(result.roles.reviewer.reducedBytes, 9, name)
+    await assert.rejects(readdir(join(outputs[0], "..")), /ENOENT/, name)
+  }
+})
+
+test("OpenCode exports at the parse limit are checked, while larger exports are partial", async () => {
+  const limit = 16 * 1024 * 1024
+  const base = '{"info":{"id":"ses_123"},"messages":[]}'
+  for (const [size, expected] of [[limit, "available"], [limit + 1, "partial"]]) {
+    let output
+    const sources = createNativeSources(async (_command, _args, path) => {
+      output = path
+      await writeFile(path, base + " ".repeat(size - Buffer.byteLength(base)))
+    })
+    const result = await sources.inspect({ harness: "opencode", evidence: lane.authorEvidence })
+    assert.equal(result.status, expected)
+    assert.equal(result.bytes, size)
+    if (expected === "available") assert.equal(result.messageCount, 0)
+    else assert.match(result.gaps[0], /16 MiB diagnostic parse limit/)
+    await assert.rejects(readdir(join(output, "..")), /ENOENT/)
+  }
 })
 
 test("native collection writes to temporary files and removes them after success and failure", async () => {
