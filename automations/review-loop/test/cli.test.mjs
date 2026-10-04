@@ -14,6 +14,7 @@ for (const args of [["--help"], ["-h"], ["handoff", "--help"]]) {
     assert.match(stdout, /^Usage:/)
     assert.match(stdout, /handoff validate --path <handoff-file>/)
     assert.match(stdout, /lane recover --worktree <path> --role author\|reviewer/)
+    assert.match(stdout, /lane evidence \(--worktree <path> \| --issue <number>\)/)
     assert.match(stdout, /tars lane set-max-rounds --worktree <path> \[--max-rounds <number> \| --review-budget <number>\] \(at least one required\) \[--resume\]/)
   })
 }

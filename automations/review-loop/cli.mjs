@@ -15,6 +15,7 @@ import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
+import { inspectLaneEvidence } from "./lib/investigation-evidence.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -72,6 +73,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "set-max-rounds") await setMaxRounds({ values, state })
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
     else if (command === "lane" && positionals[1] === "resume") await resume({ values, state })
+    else if (command === "lane" && positionals[1] === "evidence") await evidence({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
@@ -184,6 +186,24 @@ async function close({ values, state }) {
   console.log(`closed: ${worktreePath}`)
 }
 
+async function evidence({ values, state }) {
+  if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
+  if (!values.worktree && !values.issue) throw new Error("lane evidence requires --worktree <path> or --issue <number>")
+  const worktreePath = values.worktree
+    ? await realpath(values.worktree)
+    : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
+  const result = await inspectLaneEvidence({ state, aoe: new AoeClient(), worktreePath })
+  console.log(`Native evidence inventory started ${result.asOf} for ${worktreePath}`)
+  for (const [role, source] of Object.entries(result.roles)) {
+    const detail = source.harness === "codex"
+      ? `${source.bundleCount ?? 0} bundles, ${source.reducedBytes ?? 0} reduced bytes`
+      : `${source.bytes ?? 0} export bytes, ${source.messageCount ?? "unknown"} messages, session ${source.nativeSessionId ?? "unknown"}`
+    console.log(`${role}: ${source.status} (${source.harness})${source.status === "unavailable" ? `: ${source.reason}` : `; ${detail}`}`)
+    for (const gap of source.gaps ?? []) console.log(`  gap: ${gap}`)
+  }
+  console.log("Source inventory only; navigation analysis is not available yet.")
+}
+
 async function recover({ values, state }) {
   if (!values.worktree) throw new Error("lane recover requires --worktree <path>")
   if (!values.role) throw new Error("lane recover requires --role author or --role reviewer")
@@ -289,6 +309,7 @@ function printUsage() {
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
+  tars lane evidence (--worktree <path> | --issue <number>)
   tars status`)
 }
 

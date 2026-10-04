@@ -150,7 +150,16 @@ tars lane start \
 To prepare a newly launched Codex/OpenCode lane for the active-lane
 investigation probe, add `--investigate capture`. TARS configures native
 capture before either role starts and retains only active-lane evidence
-references. It does not import, copy, or report native evidence yet.
+references. It does not retain a TARS evidence store or produce an investigation
+report yet.
+
+`tars lane evidence --issue <number>` (or `--worktree <path>`) checks that both
+AoE roles are idle or waiting and reads their native sources. It prints a
+source inventory and coverage gaps, not a navigation judgment. OpenCode export
+and Codex trace reductions use private temporary files that are removed when
+the command exits. A missing source for one role does not hide the other role's
+coverage. This diagnostic is available only while the capture-enabled lane is
+registered.
 
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is
