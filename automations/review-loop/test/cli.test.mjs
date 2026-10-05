@@ -34,7 +34,7 @@ test("lane evidence accepts issue and worktree selectors and prints a coverage g
   const canonicalWorktree = await realpath(worktree)
   for (const [command, body] of [
     ["aoe", `console.log(JSON.stringify([{session:"author-aoe",state:"idle"},{session:"reviewer-aoe",state:"waiting"}]))`],
-    ["opencode", `console.log(JSON.stringify({info:{id:"ses_123"},messages:[]}))`],
+    ["opencode", `console.log(JSON.stringify({info:{id:"ses_123",directory:"${worktree}"},messages:[{info:{id:"msg_1",time:{created:100}},parts:[{id:"p1",sessionID:"ses_123",messageID:"msg_1",type:"tool",tool:"read",state:{status:"completed",input:{filePath:"${worktree}/a.ts"},metadata:{display:{type:"file",path:"${worktree}/a.ts",text:"content",lineStart:1,lineEnd:1,totalLines:1}}}},{id:"p2",sessionID:"ses_123",messageID:"msg_1",type:"tool",tool:"bash",state:{status:"completed",input:{command:"cat a.ts && cat b.ts"},output:"content",metadata:{exit:0}}}]}]}))`],
   ]) {
     const executable = join(bin, command)
     await writeFile(executable, `#!${process.execPath}\n${body}\n`)
@@ -60,6 +60,13 @@ test("lane evidence accepts issue and worktree selectors and prints a coverage g
     assert.match(stdout, /reviewer: unavailable \(codex\): trace unavailable/)
     assert.match(stdout, /Source inventory only/)
   }
+  const { stdout: indexed } = await run(["--issue", "75", "--index"])
+  assert.match(indexed, /author: available \(opencode\)/)
+  assert.match(indexed, /reviewer: unavailable \(codex\): trace unavailable/)
+  assert.match(indexed, /transient index: 1 segments;.*"read":1.*"unknown":1/)
+  assert.match(indexed, /coverage gap: 1 shell\/tool events/)
+  assert.match(indexed, /measured lower bounds: 1 files with visible content/)
+  assert.match(indexed, /block author:initial: 2 events/)
   await assert.rejects(run(["--issue", "75", "--worktree", worktree]), /Specify either --worktree.*or --issue/)
   await assert.rejects(run([]), /lane evidence requires --worktree.*or --issue/)
 })

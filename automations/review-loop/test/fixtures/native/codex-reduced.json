@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "trace_id": "trace_fixture",
+  "rollout_id": "rollout_fixture",
+  "terminal_operations": {
+    "op_fixture": {
+      "operation_id": "op_fixture", "terminal_id": "terminal_fixture",
+      "tool_call_id": "call_fixture", "kind": "exec_command",
+      "execution": {
+        "started_at_unix_ms": 2000, "started_seq": 7,
+        "ended_at_unix_ms": 2010, "ended_seq": 8, "status": "completed"
+      },
+      "request": {
+        "type": "exec_command", "command": ["/bin/zsh", "-lc", "rtk rg -n needle src/a.ts && rtk cat src/a.ts"],
+        "display_command": "rtk rg -n needle src/a.ts && rtk cat src/a.ts",
+        "cwd": "/repo", "yield_time_ms": 1000, "max_output_tokens": 1000
+      },
+      "result": {
+        "exit_code": 0, "stdout": "1:needle", "stderr": "",
+        "formatted_output": "1:needle", "original_token_count": 2,
+        "chunk_id": "chunk_fixture"
+      },
+      "model_observations": [], "raw_payload_ids": []
+    }
+  },
+  "tool_calls": {
+    "call_fixture": { "tool_call_id": "call_fixture" }
+  },
+  "inference_calls": {},
+  "compactions": {}
+}

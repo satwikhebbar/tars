@@ -161,6 +161,19 @@ the command exits. A missing source for one role does not hide the other role's
 coverage. This diagnostic is available only while the capture-enabled lane is
 registered.
 
+Add `--index` to the same diagnostic to build a transient, source-neutral event
+index and print per-role counts. The index retains native event pointers and
+labels direct OpenCode reads separately from shell-inferred reads and searches.
+Its supported shell grammar is deliberately narrow: a single `cat`, `sed -n`,
+`head -n`, `rg -n`, `grep -n`, or `find` command, optionally behind `rtk`.
+Compound commands, pipes, redirects, expansion, scripts, and other forms remain
+unknown and appear as a coverage gap. The preview groups events into role blocks
+using recorded TARS dispatch times and retains each dispatched handoff's commit
+SHA; events with no usable time remain unassigned. It does not yet produce a
+navigation judgment. Its file-breadth and repetition counts are conservative
+lower bounds over supported observations; compaction resets repeat counters.
+It writes no index or report.
+
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is
 unset, the location is `~/.codex/tars/rollout-traces/...`. This is a TARS

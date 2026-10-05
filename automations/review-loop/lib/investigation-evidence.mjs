@@ -2,12 +2,15 @@ import { spawn } from "node:child_process"
 import { mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { indexCodex, indexOpenCode } from "./investigation-index.mjs"
+import { buildLaneBlocks } from "./investigation-blocks.mjs"
+import { classifyEvent, readHandoffs } from "./coordinator.mjs"
 
 const QUIET_STATES = new Set(["idle", "waiting"])
 const MAX_INVENTORY_PARSE_BYTES = 16 * 1024 * 1024
 
 /** A read-only preflight and native-source inventory for an active capture lane. */
-export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = nativeSources, now = () => new Date() }) {
+export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = nativeSources, now = () => new Date(), includeIndex = false }) {
   const lane = state.lane(worktreePath)
   if (!lane) throw new Error(`No active lane for ${worktreePath}.`)
   if (lane.investigationCapture !== "capture") throw new Error(`Lane ${worktreePath} was not started with --investigate capture.`)
@@ -17,11 +20,35 @@ export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = 
   for (const role of ["author", "reviewer"]) {
     const evidence = lane[`${role}Evidence`]
     const harness = lane[`${role}Harness`]
+    let source
     try {
-      roles[role] = { harness, ...(await sources.inspect({ role, harness, evidence, worktreePath })) }
+      source = await sources.inspect({ role, harness, evidence, worktreePath, includeIndex })
     } catch (error) {
-      roles[role] = { harness, status: "unavailable", reason: error instanceof Error ? error.message : String(error) }
+      source = { status: "unavailable", reason: error instanceof Error ? error.message : String(error) }
     }
+    if (includeIndex && evidence?.previous?.length) {
+      const history = []
+      const gaps = [...(source.gaps ?? [])]
+      if (source.status === "unavailable") gaps.push(`current segment: ${source.reason}`)
+      for (const [index, prior] of evidence.previous.entries()) {
+        try {
+          const result = await sources.inspect({ role, harness, evidence: prior, worktreePath, includeIndex })
+          history.push(...result.segments ?? [])
+          if (result.status !== "available") gaps.push(`prior segment ${index + 1}: ${result.gaps?.join("; ") ?? result.status}`)
+        } catch (error) {
+          gaps.push(`prior segment ${index + 1}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      const segments = [...history, ...(source.segments ?? [])]
+      source = { ...source, segments, gaps, status: gaps.length ? (segments.length ? "partial" : "unavailable") : source.status }
+    }
+    roles[role] = { harness, ...source }
+  }
+  let blocks
+  if (includeIndex) {
+    const handoffs = (await readHandoffs(worktreePath, ["inbox", "done"]))
+      .map(({ handoff }) => ({ metadata: handoff.metadata, event: classifyEvent(handoff) }))
+    blocks = buildLaneBlocks({ handoffs, deliveries: state.dispatchedEvents?.(worktreePath) ?? new Map(), roles })
   }
   await assertQuiet(aoe, lane)
   const current = state.lane(worktreePath)
@@ -31,7 +58,7 @@ export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = 
       JSON.stringify(current.reviewerEvidence) !== JSON.stringify(lane.reviewerEvidence)) {
     throw new Error("Lane sessions or evidence changed during collection; retry when both roles are idle.")
   }
-  return { worktreePath, asOf, roles }
+  return { worktreePath, asOf, roles, ...(includeIndex ? { blocks } : {}) }
 }
 
 async function assertQuiet(aoe, lane) {
@@ -49,7 +76,7 @@ export const nativeSources = createNativeSources()
 
 export function createNativeSources(run = runToFile) {
   return {
-    async inspect({ harness, evidence }) {
+    async inspect({ role, harness, evidence, includeIndex = false }) {
     if (evidence?.status !== "available" || evidence.harness !== harness) {
       throw new Error(evidence?.reason ?? "Native evidence reference is unavailable.")
     }
@@ -68,7 +95,8 @@ export function createNativeSources(run = runToFile) {
         if ((native.info?.id ?? native.id) !== evidence.nativeSessionId || !Array.isArray(native.messages)) {
           throw new Error(`OpenCode export does not match native session ${evidence.nativeSessionId}.`)
         }
-        return { status: "available", nativeSessionId: evidence.nativeSessionId, bytes: size, messageCount: native.messages.length }
+        return { status: "available", nativeSessionId: evidence.nativeSessionId, bytes: size, messageCount: native.messages.length,
+          ...(includeIndex ? { segments: [indexOpenCode(native, { role, sessionId: evidence.nativeSessionId })] } : {}) }
       })
     }
     if (harness === "codex") {
@@ -79,19 +107,23 @@ export function createNativeSources(run = runToFile) {
       return withTempDirectory(async (directory) => {
         let bytes = 0
         const gaps = []
+        const segments = []
         for (const [index, bundle] of bundles.entries()) {
           const bundlePath = join(evidence.traceRoot, bundle)
           try {
             await stat(join(bundlePath, "manifest.json"))
             const output = join(directory, `codex-${index}.json`)
             await run("codex", ["debug", "trace-reduce", bundlePath, "--output", output], output, { stdoutToFile: false })
-            bytes += (await stat(output)).size
+            const size = (await stat(output)).size
+            if (includeIndex) segments.push(indexCodex(JSON.parse(await readFile(output, "utf8")), { role, bundle }))
+            bytes += size
           } catch (error) {
             gaps.push(`${bundle}: ${error instanceof Error ? error.message : String(error)}`)
           }
         }
         if (!bytes) throw new Error(`No Codex bundle could be reduced${gaps.length ? ` (${gaps.join("; ")})` : "."}`)
-        return { status: gaps.length ? "partial" : "available", bundleCount: bundles.length, reducedBytes: bytes, gaps }
+        return { status: gaps.length ? "partial" : "available", bundleCount: bundles.length, reducedBytes: bytes, gaps,
+          ...(includeIndex ? { segments } : {}) }
       })
     }
     throw new Error(`Unsupported native source: ${harness}.`)

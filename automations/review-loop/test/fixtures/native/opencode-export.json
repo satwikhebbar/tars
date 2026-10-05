@@ -1,0 +1,31 @@
+{
+  "info": { "id": "ses_fixture", "directory": "/repo" },
+  "messages": [
+    {
+      "info": { "id": "msg_fixture", "time": { "created": 1000 } },
+      "parts": [
+        {
+          "type": "tool", "tool": "read", "callID": "call_read", "id": "part_read",
+          "sessionID": "ses_fixture", "messageID": "msg_fixture",
+          "state": {
+            "status": "completed", "input": { "filePath": "/repo/src/a.ts" },
+            "output": "one\ntwo", "metadata": { "display": {
+              "type": "file", "path": "/repo/src/a.ts", "text": "one\ntwo",
+              "lineStart": 1, "lineEnd": 2, "totalLines": 10, "truncated": false
+            } },
+            "title": "Read src/a.ts", "time": { "start": 1001, "end": 1002 }
+          }
+        },
+        {
+          "type": "tool", "tool": "bash", "callID": "call_bash", "id": "part_bash",
+          "sessionID": "ses_fixture", "messageID": "msg_fixture",
+          "state": {
+            "status": "completed", "input": { "command": "rtk cat src/a.ts && rtk cat src/b.ts" },
+            "output": "one\ntwo", "metadata": { "exit": 0, "truncated": false },
+            "title": "Inspect files", "time": { "start": 1003, "end": 1004 }
+          }
+        }
+      ]
+    }
+  ]
+}

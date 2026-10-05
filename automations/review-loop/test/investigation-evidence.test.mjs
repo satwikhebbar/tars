@@ -183,3 +183,73 @@ test("native stdout goes directly to a regular file past the pipe boundary", asy
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("optional index is built from temporary native files and discarded with them", async () => {
+  let exportedPath
+  const sources = createNativeSources(async (_command, _args, output) => {
+    exportedPath = output
+    await writeFile(output, JSON.stringify({ info: { id: "ses_123" }, messages: [{
+      info: { id: "msg_1" }, parts: [{ id: "part_1", sessionID: "ses_123", messageID: "msg_1",
+        type: "tool", tool: "read", state: { status: "completed", input: { filePath: "a.ts" },
+          metadata: { display: { type: "file", path: "a.ts", text: "content", lineStart: 1, lineEnd: 1, totalLines: 1 } } } }],
+    }] }))
+  })
+  const result = await sources.inspect({ role: "author", harness: "opencode", evidence: lane.authorEvidence, includeIndex: true })
+  assert.equal(result.segments[0].events[0].kind, "read")
+  assert.equal(result.segments[0].events[0].extent.full, true)
+  await assert.rejects(readdir(join(exportedPath, "..")), /ENOENT/)
+})
+
+test("index includes previous OpenCode sessions and labels a missing segment", async () => {
+  const captured = { ...lane, authorEvidence: { ...lane.authorEvidence,
+    previous: [{ status: "available", harness: "opencode", nativeSessionId: "ses_old" },
+      { status: "available", harness: "opencode", nativeSessionId: "ses_missing" }] } }
+  const f = fixture({ current: captured, sources: { inspect: async ({ evidence, role }) => {
+    if (evidence.nativeSessionId === "ses_missing") throw new Error("export missing")
+    return { status: "available", segments: [{ segmentId: evidence.nativeSessionId ?? role, events: [] }] }
+  } } })
+  const result = await inspectLaneEvidence({ ...f, worktreePath: path, includeIndex: true })
+  assert.equal(result.roles.author.status, "partial")
+  assert.deepEqual(result.roles.author.segments.map((segment) => segment.segmentId), ["ses_old", "ses_123"])
+  assert.match(result.roles.author.gaps[0], /prior segment 2: export missing/)
+})
+
+test("indexed Codex collection keeps a good bundle when another reducer output is malformed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tars-test-traces-"))
+  const outputs = []
+  try {
+    for (const name of ["bundle-a", "bundle-b"]) {
+      await mkdir(join(root, name))
+      await writeFile(join(root, name, "manifest.json"), "{}")
+    }
+    const sources = createNativeSources(async (_command, args, output) => {
+      outputs.push(output)
+      await writeFile(output, args[2].endsWith("bundle-a")
+        ? JSON.stringify({ schema_version: 1, trace_id: "trace", rollout_id: "rollout",
+          terminal_operations: {}, compactions: {} }) : "{invalid")
+    })
+    const result = await sources.inspect({ role: "reviewer", harness: "codex",
+      evidence: { ...lane.reviewerEvidence, traceRoot: root }, includeIndex: true })
+    assert.equal(result.status, "partial")
+    assert.equal(result.segments.length, 1)
+    assert.equal(result.bundleCount, 2)
+    assert.match(result.gaps[0], /bundle-b:.*JSON/)
+    assert.equal(result.reducedBytes, Buffer.byteLength(JSON.stringify({ schema_version: 1,
+      trace_id: "trace", rollout_id: "rollout", terminal_operations: {}, compactions: {} })))
+    await assert.rejects(readdir(join(outputs[0], "..")), /ENOENT/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("indexed collection keeps the usable role and identifies an unavailable role", async () => {
+  const f = fixture({ sources: { inspect: async ({ role }) => role === "author"
+    ? { status: "available", segments: [{ segmentId: "ses_123", events: [
+      { kind: "read", visible: true, path: "/repo/a.ts", pointer: { partId: "p1" }, time: 100 },
+    ] }] }
+    : Promise.reject(new Error("trace missing")) } })
+  const result = await inspectLaneEvidence({ ...f, worktreePath: path, includeIndex: true })
+  assert.equal(result.roles.author.status, "available")
+  assert.equal(result.roles.author.segments[0].events[0].pointer.partId, "p1")
+  assert.equal(result.roles.reviewer.status, "unavailable")
+  assert.match(result.roles.reviewer.reason, /trace missing/)
+  assert.equal(result.roles.author.segments[0].events[0].blockId, "author:initial")
+})

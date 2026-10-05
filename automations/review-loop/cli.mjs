@@ -16,6 +16,7 @@ import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
 import { inspectLaneEvidence } from "./lib/investigation-evidence.mjs"
+import { summarizeNavigation } from "./lib/investigation-metrics.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -48,6 +49,7 @@ async function main() {
       "author-model": { type: "string" },
       "reviewer-model": { type: "string" },
       investigate: { type: "string" },
+      index: { type: "boolean", default: false },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -192,7 +194,7 @@ async function evidence({ values, state }) {
   const worktreePath = values.worktree
     ? await realpath(values.worktree)
     : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
-  const result = await inspectLaneEvidence({ state, aoe: new AoeClient(), worktreePath })
+  const result = await inspectLaneEvidence({ state, aoe: new AoeClient(), worktreePath, includeIndex: values.index })
   console.log(`Native evidence inventory started ${result.asOf} for ${worktreePath}`)
   for (const [role, source] of Object.entries(result.roles)) {
     const detail = source.harness === "codex"
@@ -200,6 +202,22 @@ async function evidence({ values, state }) {
       : `${source.bytes ?? 0} export bytes, ${source.messageCount ?? "unknown"} messages, session ${source.nativeSessionId ?? "unknown"}`
     console.log(`${role}: ${source.status} (${source.harness})${source.status === "unavailable" ? `: ${source.reason}` : `; ${detail}`}`)
     for (const gap of source.gaps ?? []) console.log(`  gap: ${gap}`)
+    if (values.index && source.segments) {
+      const events = source.segments.flatMap((segment) => segment.events)
+      const counts = Object.fromEntries(["read", "search", "filename-only", "compaction", "unknown", "other"]
+        .map((kind) => [kind, events.filter((event) => event.kind === kind).length]))
+      console.log(`  transient index: ${source.segments.length} segments; ${JSON.stringify(counts)}`)
+      if (counts.unknown) console.log(`  coverage gap: ${counts.unknown} shell/tool events could not be classified by the supported grammar`)
+      const metrics = summarizeNavigation(source.segments)
+      console.log(`  measured lower bounds: ${metrics.observedFileBreadthLowerBound} files with visible content; ${metrics.repeatedFullReads.length} confirmed full rereads; ${metrics.repeatedExactSearches.length} exact repeated searches`)
+    }
+  }
+  if (values.index) {
+    for (const block of result.blocks) {
+      const count = result.roles[block.role].segments?.flatMap((segment) => segment.events)
+        .filter((event) => event.blockId === block.id).length ?? 0
+      if (count || block.handoffId) console.log(`  block ${block.id}: ${count} events${block.headCommit ? `, commit ${block.headCommit}` : ""}`)
+    }
   }
   console.log("Source inventory only; navigation analysis is not available yet.")
 }
@@ -309,7 +327,7 @@ function printUsage() {
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
-  tars lane evidence (--worktree <path> | --issue <number>)
+  tars lane evidence (--worktree <path> | --issue <number>) [--index]
   tars status`)
 }
 
