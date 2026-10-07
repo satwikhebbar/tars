@@ -5,7 +5,14 @@ export function indexOpenCode(native, { role, sessionId }) {
   }
   const events = []
   const usage = []
+  const conversation = []
   for (const message of native.messages) {
+    if (["user", "assistant"].includes(message.info?.role)) {
+      const text = (message.parts ?? []).filter((part) => ["text", "reasoning"].includes(part.type) && typeof part.text === "string")
+        .map((part) => part.text).join("\n")
+      if (text) conversation.push({ time: message.info?.time?.created ?? null, role: message.info.role, text,
+        pointer: { harness: "opencode", sessionId, messageId: message.info.id } })
+    }
     for (const part of message.parts ?? []) {
       if (!part.id || part.sessionID !== sessionId || part.messageID !== message.info?.id) {
         throw new Error("OpenCode part has invalid native provenance.")
@@ -49,7 +56,7 @@ export function indexOpenCode(native, { role, sessionId }) {
       }
     }
   }
-  return { harness: "opencode", role, segmentId: sessionId, cwd: native.info?.directory ?? null, events, usage }
+  return { harness: "opencode", role, segmentId: sessionId, cwd: native.info?.directory ?? null, events, usage, conversation }
 }
 
 export function indexCodex(native, { role, bundle }) {
@@ -97,7 +104,12 @@ export function indexCodex(native, { role, bundle }) {
       rolloutId: native.rollout_id, inferenceCallId: call.inference_call_id },
     metrics: call.usage ?? null,
   }))
-  return { harness: "codex", role, segmentId: native.rollout_id, events, usage }
+  const conversation = Object.values(native.conversation_items ?? {})
+    .filter((item) => ["user", "assistant", "tool"].includes(item.role) && item.body)
+    .map((item) => ({ time: item.first_seen_at_unix_ms ?? null, role: item.role,
+      text: item.body, pointer: { harness: "codex", bundle, traceId: native.trace_id,
+        rolloutId: native.rollout_id, itemId: item.item_id } }))
+  return { harness: "codex", role, segmentId: native.rollout_id, events, usage, conversation }
 }
 
 /** Supported shell grammar is intentionally small. No command is executed or expanded. */

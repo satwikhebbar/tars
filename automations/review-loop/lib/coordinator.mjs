@@ -1,6 +1,7 @@
 import { access, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWorkflowHandoff } from "./handoff.mjs"
+import { markedDispatch } from "./investigation-dispatch.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 export const ACTIVE_STATES = new Set(["idle", "waiting"])
@@ -116,19 +117,21 @@ export class ReviewLoopCoordinator {
           if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
           if (hasNextIteration(lane, event)) {
             const nextIteration = lane.currentIteration + 1
-            await this.sendAuthorPrompt(
+            const dispatchId = await this.sendAuthorPrompt(
               lane,
               sessionId,
               iterationPrompt(lane, event.handoff.metadata.workflow_id, await planVerdictPathFor(lane), nextIteration, event.round + 1),
             )
             this.state.saveLane({ ...lane, state: "implementing", phase: "building", currentIteration: nextIteration })
-            this.state.markDispatched(lane.worktreePath, event.key)
+            this.state.markDispatched(lane.worktreePath, event.key, { dispatchId, destinationRole: "author" })
             results.push({ event, action: `sent:author:iteration-${nextIteration}` })
             break
           }
-          await this.sendAuthorPrompt(lane, sessionId, promptFor(lane, event))
+          const dispatchId = await this.sendAuthorPrompt(lane, sessionId, promptFor(lane, event))
+          this.state.markDispatched(lane.worktreePath, event.key, { dispatchId, destinationRole: "author" })
+        } else {
+          this.state.markDispatched(lane.worktreePath, event.key, { boundaryKind: "terminal" })
         }
-        this.state.markDispatched(lane.worktreePath, event.key)
         this.state.saveLane({ ...lane, state: event.outcome })
         results.push({ event, action: event.outcome })
         break
@@ -137,8 +140,8 @@ export class ReviewLoopCoordinator {
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
       if (event.destination === "author" && event.reviewKind === "plan" && event.outcome === "approved") {
         if (lane.authorHarness !== "opencode") {
-          await this.aoe.send(sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
-          this.state.markDispatched(lane.worktreePath, event.key)
+          const dispatchId = await this.sendPrompt(lane, sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
+          this.state.markDispatched(lane.worktreePath, event.key, { dispatchId, destinationRole: "author" })
           this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, reviewBudget: reviewBudgetFor(event.handoff.metadata) })
           results.push({ event, action: "sent:author:build" })
           break
@@ -157,7 +160,7 @@ export class ReviewLoopCoordinator {
           reviewBudget: reviewBudgetFor(event.handoff.metadata),
         })
         await this.aoe.send(sessionId, "/compact")
-        this.state.markDispatched(lane.worktreePath, event.key)
+        this.state.markDispatched(lane.worktreePath, event.key, { boundaryKind: "command" })
         results.push({ event, action: "sent:author:compact" })
         break
       }
@@ -166,14 +169,15 @@ export class ReviewLoopCoordinator {
         event.reviewKind === "code" &&
         event.outcome === "changes_requested" &&
         Number.isInteger(lane.reviewBudget)
-      if (event.destination === "author") await this.sendAuthorPrompt(lane, sessionId, authorPrompt(lane, event))
-      else await this.aoe.send(sessionId, authorPrompt(lane, event))
+      const dispatchId = event.destination === "author"
+        ? await this.sendAuthorPrompt(lane, sessionId, authorPrompt(lane, event))
+        : await this.sendPrompt(lane, sessionId, authorPrompt(lane, event))
       this.state.dispatch(lane.worktreePath, event.key, {
         ...lane,
         state: event.destination === "reviewer" ? "reviewing" : event.reviewKind === "plan" ? "planning" : "implementing",
         phase: event.reopensLane ? "post_pr_feedback" : lane.phase,
         ...(consumesBudget ? { reviewBudgetConsumed: (lane.reviewBudgetConsumed ?? 0) + 1 } : {}),
-      })
+      }, { dispatchId, destinationRole: event.destination })
       results.push({ event, action: `sent:${event.destination === "reviewer" ? lane.reviewerHarness : lane.authorHarness}` })
       break
     }
@@ -191,12 +195,12 @@ export class ReviewLoopCoordinator {
     const planVerdictPath = await planVerdictPathFor(lane)
     const planVerdict = await readHandoff(planVerdictPath)
     await this.aoe.switchAgent(lane.authorSessionId, "build")
-    await this.sendAuthorPrompt(
+    const dispatchId = await this.sendAuthorPrompt(
       lane,
       lane.authorSessionId,
       iterationPrompt(lane, lane.transitionWorkflowId, planVerdictPath, lane.currentIteration, planVerdict.metadata.round + 1),
     )
-    this.state.markDispatched(lane.worktreePath, eventKey)
+    this.state.markDispatched(lane.worktreePath, eventKey, { dispatchId, destinationRole: "author" })
     this.state.saveLane({
       ...lane,
       state: "implementing",
@@ -212,7 +216,13 @@ export class ReviewLoopCoordinator {
     if (lane.authorHarness === "opencode" && lane.planning === "required" && ["building", "post_pr_feedback"].includes(lane.phase)) {
       await this.aoe.switchAgent(sessionId, "build")
     }
-    await this.aoe.send(sessionId, prompt)
+    return this.sendPrompt(lane, sessionId, prompt)
+  }
+
+  async sendPrompt(lane, sessionId, prompt) {
+    const delivery = lane.investigationCapture === "capture" ? markedDispatch(prompt) : { message: prompt, id: null }
+    await this.aoe.send(sessionId, delivery.message)
+    return delivery.id
   }
 }
 

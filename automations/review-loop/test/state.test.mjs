@@ -83,6 +83,19 @@ test("journals a dispatch and its lane update atomically", async () => {
   state.close()
 })
 
+test("journals native dispatch IDs without changing the legacy timestamp lookup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
+  const state = new StateStore(join(directory, "state.sqlite"))
+  await state.open()
+  state.markDispatched("/lane", "lane-start", { dispatchId: "abc", destinationRole: "author" })
+  assert.ok(Date.parse(state.dispatchedEvents("/lane").get("lane-start")))
+  assert.deepEqual(state.dispatchRecords("/lane").get("lane-start"), {
+    createdAt: state.dispatchedEvents("/lane").get("lane-start"),
+    dispatchId: "abc", boundaryKind: "prompt", destinationRole: "author",
+  })
+  state.close()
+})
+
 test("rolls back the dispatch marker when the lane update fails", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
   const state = new StateStore(join(directory, "state.sqlite"))
@@ -150,5 +163,25 @@ test("migrates a pre-existing lanes table to add the review budget columns", asy
   assert.ok(columns.includes("review_budget_consumed"))
   assert.equal(state.lane("/legacy-budgeted").reviewBudget, null)
   assert.equal(state.lane("/legacy-budgeted").reviewBudgetConsumed, 0)
+  state.close()
+})
+
+test("migrates legacy dispatch rows without changing recovery timestamps", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-state-"))
+  const path = join(directory, "state.sqlite")
+  const legacy = new DatabaseSync(path)
+  legacy.exec(`CREATE TABLE dispatched_events (
+    worktree_path TEXT NOT NULL, event_key TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (worktree_path, event_key))`)
+  legacy.prepare("INSERT INTO dispatched_events VALUES (?, ?, ?)")
+    .run("/lane", "review:key", "2026-10-01T00:00:00.000Z")
+  legacy.close()
+  const state = new StateStore(path)
+  await state.open()
+  assert.equal(state.dispatchedEvents("/lane").get("review:key"), "2026-10-01T00:00:00.000Z")
+  assert.deepEqual(state.dispatchRecords("/lane").get("review:key"), {
+    createdAt: "2026-10-01T00:00:00.000Z", dispatchId: null,
+    boundaryKind: "prompt", destinationRole: null,
+  })
   state.close()
 })

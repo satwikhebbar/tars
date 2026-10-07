@@ -253,6 +253,9 @@ test("starts a capture-enabled Codex lane with separate trace roots under CODEX_
     assert.equal(state.entries[0].investigationCapture, "capture")
     assert.equal(state.entries[0].authorEvidence.harness, "codex")
     assert.equal(state.entries[0].reviewerEvidence.harness, "codex")
+    assert.match(aoe.sent[0].message, /^start\n\n\[TARS dispatch ID: [0-9a-f-]{36}\]$/)
+    assert.equal(state.dispatched[0].key, "lane-start")
+    assert.equal(state.dispatched[0].metadata.destinationRole, "author")
   } finally {
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = previousCodexHome
@@ -973,6 +976,11 @@ class FakeAoe {
 class FakeState {
   constructor() {
     this.entries = []
+    this.dispatched = []
+  }
+
+  markDispatched(worktreePath, key, metadata) {
+    this.dispatched.push({ worktreePath, key, metadata })
   }
 
   saveLane(lane) {

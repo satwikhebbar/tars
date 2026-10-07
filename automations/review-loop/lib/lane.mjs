@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { groupForWorktree } from "./aoe.mjs"
 import { captureLaunchCommand, createOpenCodeEvidence, ensureOpenCodeServer, openCodeAttachCommand, prepareCapture, stopOpenCodeServer } from "./investigation-capture.mjs"
+import { markedDispatch } from "./investigation-dispatch.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -135,7 +136,9 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
       reviewerEvidence: capture?.roles.reviewer ?? null,
     })
     registered = true
-    await aoe.send(author.id, openingPrompt)
+    const opening = capture ? markedDispatch(openingPrompt) : { message: openingPrompt, id: null }
+    await aoe.send(author.id, opening.message)
+    if (capture) state.markDispatched(worktreePath, "lane-start", { dispatchId: opening.id, destinationRole: "author" })
     return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
   } catch (error) {
     if (capture && !registered) await cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime })

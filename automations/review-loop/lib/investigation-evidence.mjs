@@ -46,9 +46,9 @@ export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = 
   }
   let blocks
   if (includeIndex) {
-    const handoffs = (await readHandoffs(worktreePath, ["inbox", "done"]))
+    const handoffs = (await readHandoffs(worktreePath, ["inbox", "in-progress", "done", "archive"]))
       .map(({ handoff }) => ({ metadata: handoff.metadata, event: classifyEvent(handoff) }))
-    blocks = buildLaneBlocks({ handoffs, deliveries: state.dispatchedEvents?.(worktreePath) ?? new Map(), roles })
+    blocks = buildLaneBlocks({ handoffs, deliveries: state.dispatchRecords?.(worktreePath) ?? state.dispatchedEvents?.(worktreePath) ?? new Map(), roles })
   }
   await assertQuiet(aoe, lane)
   const current = state.lane(worktreePath)

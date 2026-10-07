@@ -57,6 +57,9 @@ export class StateStore {
         worktree_path TEXT NOT NULL,
         event_key TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        dispatch_id TEXT,
+        boundary_kind TEXT NOT NULL DEFAULT 'prompt',
+        destination_role TEXT,
         PRIMARY KEY (worktree_path, event_key)
       );
       CREATE TABLE IF NOT EXISTS lane_claims (
@@ -65,6 +68,10 @@ export class StateStore {
         token TEXT NOT NULL DEFAULT ''
       );
     `)
+    for (const column of ["dispatch_id TEXT", "boundary_kind TEXT NOT NULL DEFAULT 'prompt'", "destination_role TEXT"]) {
+      try { this.database.exec(`ALTER TABLE dispatched_events ADD COLUMN ${column}`) }
+      catch (error) { if (!String(error.message).includes("duplicate column name")) throw error }
+    }
     for (const column of [
       "planning TEXT NOT NULL DEFAULT 'not_required'",
       "planning_source TEXT NOT NULL DEFAULT 'legacy'",
@@ -211,10 +218,10 @@ export class StateStore {
     )
   }
 
-  markDispatched(worktreePath, eventKey) {
+  markDispatched(worktreePath, eventKey, { dispatchId = null, boundaryKind = "prompt", destinationRole = null } = {}) {
     this.database
-      .prepare("INSERT OR IGNORE INTO dispatched_events (worktree_path, event_key, created_at) VALUES (?, ?, ?)")
-      .run(worktreePath, eventKey, new Date().toISOString())
+      .prepare("INSERT OR IGNORE INTO dispatched_events (worktree_path, event_key, created_at, dispatch_id, boundary_kind, destination_role) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(worktreePath, eventKey, new Date().toISOString(), dispatchId, boundaryKind, destinationRole)
   }
 
   /**
@@ -224,10 +231,10 @@ export class StateStore {
    * together or roll back together, so recovery can never observe an event
    * journaled as dispatched without the lane state its dispatch recorded.
    */
-  dispatch(worktreePath, eventKey, lane) {
+  dispatch(worktreePath, eventKey, lane, metadata) {
     this.database.exec("BEGIN IMMEDIATE")
     try {
-      this.markDispatched(worktreePath, eventKey)
+      this.markDispatched(worktreePath, eventKey, metadata)
       this.saveLane(lane)
       this.database.exec("COMMIT")
     } catch (error) {
@@ -242,6 +249,17 @@ export class StateStore {
       .prepare("SELECT event_key, created_at FROM dispatched_events WHERE worktree_path = ?")
       .all(worktreePath)
     return new Map(rows.map((row) => [row.event_key, row.created_at]))
+  }
+
+  /** Full observability markers for evidence attribution; legacy timestamp API stays stable. */
+  dispatchRecords(worktreePath) {
+    const rows = this.database
+      .prepare("SELECT event_key, created_at, dispatch_id, boundary_kind, destination_role FROM dispatched_events WHERE worktree_path = ?")
+      .all(worktreePath)
+    return new Map(rows.map((row) => [row.event_key, {
+      createdAt: row.created_at, dispatchId: row.dispatch_id, boundaryKind: row.boundary_kind,
+      destinationRole: row.destination_role,
+    }]))
   }
 
   /** Removes one recorded delivery so an operator-approved retry can re-dispatch it. */

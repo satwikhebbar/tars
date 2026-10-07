@@ -24,6 +24,19 @@ test("implementation response wakes only the registered Codex session once", asy
   fixture.state.close()
 })
 
+test("captured handoff prompt and journal share a unique native dispatch ID", async () => {
+  const fixture = await laneFixture({ investigationCapture: "capture" })
+  await writeWorkflowHandoff(fixture.worktree, "done/response.md",
+    `id: capture-response\ntype: implementation-response\nworkflow_id: capture\nround: 1\nhead_commit: abc123`)
+  await fixture.coordinator.processAll()
+  const [, id] = fixture.aoe.sent[0].message.match(/\[TARS dispatch ID: ([0-9a-f-]{36})\]/) ?? []
+  assert.ok(id)
+  const record = [...fixture.state.dispatchRecords(fixture.worktree).values()][0]
+  assert.equal(record.dispatchId, id)
+  assert.equal(record.destinationRole, "reviewer")
+  fixture.state.close()
+})
+
 test("feedback prompts require thread-by-thread GitHub replies", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
@@ -453,7 +466,7 @@ test("a lane blocks instead of dispatching beyond its round limit", async () => 
   fixture.state.close()
 })
 
-async function laneFixture({ maxRounds = 5, authorHarness = "opencode", reviewerHarness = "codex" } = {}) {
+async function laneFixture({ maxRounds = 5, authorHarness = "opencode", reviewerHarness = "codex", investigationCapture = "off" } = {}) {
   const worktree = await mkdtemp(join(tmpdir(), "agent-review-loop-"))
   await Promise.all([
     mkdir(join(worktree, ".agent-handoff", "inbox"), { recursive: true }),
@@ -472,6 +485,7 @@ async function laneFixture({ maxRounds = 5, authorHarness = "opencode", reviewer
     authorTool: authorHarness,
     reviewerTool: reviewerHarness,
     state: "watching",
+    investigationCapture,
     maxRounds,
     planning: "required",
     phase: "planning",
