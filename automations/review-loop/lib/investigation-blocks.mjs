@@ -8,7 +8,11 @@ export function buildLaneBlocks({ handoffs, deliveries, roles }) {
     const record = typeof raw === "string" ? { createdAt: raw } : raw
     if (record.boundaryKind && record.boundaryKind !== "prompt") continue
     const handoff = handoffByKey.get(key)
-    const role = record.destinationRole ?? handoff?.event?.destination ?? (key === "lane-start" ? "author" : null)
+    // Older journals have no destination_role. An approved terminal verdict
+    // still sends a follow-up prompt to the author; a blocked verdict does not.
+    const legacyDestination = handoff?.event?.destination === "terminal" && handoff.event.outcome === "approved"
+      ? "author" : handoff?.event?.destination
+    const role = record.destinationRole ?? legacyDestination ?? (key === "lane-start" ? "author" : null)
     if (!["author", "reviewer"].includes(role)) continue
     const journalTime = Date.parse(record.createdAt)
     if (!Number.isFinite(journalTime)) continue

@@ -103,6 +103,33 @@ test("command journal entries do not open work blocks", () => {
   assert.deepEqual(blocks.map((block) => block.id), ["reviewer:initial", "author:initial"])
 })
 
+test("legacy approved verdict opens the author's final block but blocked verdict does not", () => {
+  const roles = {
+    author: { segments: [{ events: [{ time: 350 }, { time: 550 }] }] },
+    reviewer: { segments: [{ events: [{ time: 250 }] }] },
+  }
+  const handoffs = [
+    { metadata: { id: "impl", type: "implementation-response" },
+      event: { key: "impl", destination: "reviewer" } },
+    { metadata: { id: "approved", type: "code-review" },
+      event: { key: "review:approved", destination: "terminal", outcome: "approved" } },
+    { metadata: { id: "blocked", type: "code-review" },
+      event: { key: "review:blocked", destination: "terminal", outcome: "blocked" } },
+  ]
+  const deliveries = new Map([
+    ["impl", new Date(200).toISOString()],
+    ["review:approved", new Date(300).toISOString()],
+    ["review:blocked", new Date(400).toISOString()],
+  ])
+  const blocks = buildLaneBlocks({ handoffs, deliveries, roles })
+  assert.deepEqual(blocks.filter((block) => block.start !== null).map((block) => block.id),
+    ["reviewer:impl", "author:review:approved"])
+  assert.deepEqual(roles.author.segments[0].events.map((event) => event.blockId),
+    ["author:review:approved", "author:review:approved"])
+  assert.equal(roles.reviewer.segments[0].events[0].blockId, "reviewer:impl")
+  assert.equal(blocks.find((block) => block.id === "author:review:approved").boundaryConfidence, "approximate")
+})
+
 test("matches marker text from both harness adapters", () => {
   const author = indexOpenCode({ info: { id: "ses_1" }, messages: [{
     info: { id: "msg_1", role: "user", time: { created: 100 } },
