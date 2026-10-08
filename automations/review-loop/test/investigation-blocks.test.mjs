@@ -124,3 +124,108 @@ test("matches marker text from both harness adapters", () => {
   assert.equal(blocks.find((block) => block.id === "author:initial").start, 100)
   assert.equal(blocks.find((block) => block.id === "reviewer:plan-build:key").start, 300)
 })
+
+test("missing native dispatch leaves a journal-time boundary and marks adjacent assignments uncertain", () => {
+  const events = [{ time: 199 }, { time: 200 }, { time: 201 }]
+  const roles = { author: { segments: [{ conversation: [{
+    role: "assistant", time: 100, text: "[TARS dispatch ID: aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa]",
+  }], events }] }, reviewer: { segments: [] } }
+  const blocks = buildLaneBlocks({ handoffs: [], roles, deliveries: new Map([["lane-start", {
+    createdAt: new Date(200).toISOString(), dispatchId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", destinationRole: "author",
+  }]]) })
+  assert.equal(blocks.find((block) => block.id === "author:initial").start, 200)
+  assert.equal(blocks.find((block) => block.id === "author:initial").boundaryConfidence, "approximate")
+  assert.deepEqual(events.map(({ blockId, blockBoundaryUncertain }) => [blockId, blockBoundaryUncertain]),
+    [[null, false], [null, true], ["author:initial", true]])
+})
+
+test("a native message without a usable timestamp falls back to the journal", () => {
+  const roles = { author: { segments: [{ conversation: [{
+    role: "user", time: null, text: "[TARS dispatch ID: aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa]",
+  }], events: [{ time: 201 }] }] }, reviewer: { segments: [] } }
+  const blocks = buildLaneBlocks({ handoffs: [], roles, deliveries: new Map([["lane-start", {
+    createdAt: new Date(200).toISOString(), dispatchId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", destinationRole: "author",
+  }]]) })
+  assert.equal(blocks.find((block) => block.id === "author:initial").boundaryConfidence, "approximate")
+  assert.equal(roles.author.segments[0].events[0].blockBoundaryUncertain, true)
+})
+
+test("a quoted earlier dispatch ID does not hide the current prompt marker", () => {
+  const roles = { author: { segments: [{ conversation: [{ role: "user", time: 100,
+    text: "Earlier: [TARS dispatch ID: aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa]\n" +
+      "[TARS dispatch ID: bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb]" }], events: [] }] }, reviewer: { segments: [] } }
+  const blocks = buildLaneBlocks({ handoffs: [], roles, deliveries: new Map([["lane-start", {
+    createdAt: new Date(200).toISOString(), dispatchId: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", destinationRole: "author",
+  }]]) })
+  assert.equal(blocks.find((block) => block.id === "author:initial").start, 100)
+  assert.equal(blocks.find((block) => block.id === "author:initial").boundaryConfidence, "native")
+})
+
+test("an approximate next dispatch makes the preceding block's assignment uncertain", () => {
+  const roles = {
+    author: { segments: [{ conversation: [{ role: "user", time: 100,
+      text: "[TARS dispatch ID: aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa]" }],
+    events: [{ time: 150 }] }] }, reviewer: { segments: [] },
+  }
+  const blocks = buildLaneBlocks({ handoffs: [{ metadata: { id: "impl" },
+    event: { key: "impl", destination: "reviewer" } }], roles, deliveries: new Map([
+    ["lane-start", { createdAt: new Date(110).toISOString(), dispatchId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", destinationRole: "author" }],
+    ["impl", { createdAt: new Date(200).toISOString(), destinationRole: "reviewer" }],
+  ]) })
+  assert.equal(blocks.find((block) => block.id === "author:initial").endBoundaryConfidence, "approximate")
+  assert.deepEqual([roles.author.segments[0].events[0].blockId,
+    roles.author.segments[0].events[0].blockBoundaryUncertain], ["author:initial", true])
+})
+
+test("delivery order does not determine block order and a later role closes the earlier role's block", () => {
+  const roles = {
+    author: { segments: [{ events: [{ time: 150 }, { time: 250 }, { time: 350 }] }] },
+    reviewer: { segments: [{ events: [{ time: 250 }, { time: 350 }] }] },
+  }
+  const handoffs = [{ metadata: { id: "impl" }, event: { key: "impl", destination: "reviewer" } }]
+  const deliveries = new Map([
+    ["impl", { createdAt: new Date(300).toISOString() }],
+    ["lane-start", { createdAt: new Date(100).toISOString() }],
+  ])
+  const blocks = buildLaneBlocks({ handoffs, deliveries, roles })
+  assert.deepEqual(blocks.filter((block) => block.start !== null).map((block) => block.id),
+    ["author:initial", "reviewer:impl"])
+  assert.equal(blocks.find((block) => block.id === "author:initial").end, 300)
+  assert.deepEqual(roles.author.segments[0].events.map((event) => event.blockId),
+    ["author:initial", "author:initial", null])
+  assert.deepEqual(roles.reviewer.segments[0].events.map((event) => event.blockId),
+    [null, "reviewer:impl"])
+})
+
+test("simultaneous dispatches leave tied events unassigned instead of choosing a role block", () => {
+  const roles = {
+    author: { segments: [{ events: [{ time: 200 }, { time: 201 }] }] },
+    reviewer: { segments: [{ events: [{ time: 200 }, { time: 201 }] }] },
+  }
+  const handoffs = [{ metadata: { id: "impl" }, event: { key: "impl", destination: "reviewer" } }]
+  buildLaneBlocks({ handoffs, roles, deliveries: new Map([
+    ["lane-start", { createdAt: new Date(200).toISOString(), destinationRole: "author" }],
+    ["impl", { createdAt: new Date(200).toISOString(), destinationRole: "reviewer" }],
+  ]) })
+  assert.deepEqual(roles.author.segments[0].events.map((event) => event.blockId), [null, null])
+  assert.deepEqual(roles.reviewer.segments[0].events.map((event) => event.blockId), [null, "reviewer:impl"])
+  assert.equal(roles.author.segments[0].events[0].blockBoundaryUncertain, true)
+  assert.equal(roles.reviewer.segments[0].events[0].blockBoundaryUncertain, true)
+})
+
+test("only valid prompt deliveries open blocks and repeated indexing clears stale event annotations", () => {
+  const event = { time: 150, blockId: "stale", blockBoundaryUncertain: true }
+  const roles = { author: { segments: [{ events: [event] }] }, reviewer: { segments: [] } }
+  const deliveries = new Map([
+    ["ignored-role", { createdAt: new Date(100).toISOString(), destinationRole: "observer" }],
+    ["invalid-time", { createdAt: "invalid", destinationRole: "author" }],
+    ["compact", { createdAt: new Date(120).toISOString(), boundaryKind: "command", destinationRole: "author" }],
+    ["terminal", { createdAt: new Date(130).toISOString(), boundaryKind: "terminal", destinationRole: "author" }],
+  ])
+  assert.deepEqual(buildLaneBlocks({ handoffs: [], deliveries, roles }).map((block) => block.id),
+    ["reviewer:initial", "author:initial"])
+  assert.deepEqual([event.blockId, event.blockBoundaryUncertain], ["author:initial", true])
+  event.time = null
+  buildLaneBlocks({ handoffs: [], deliveries, roles })
+  assert.deepEqual([event.blockId, event.blockBoundaryUncertain], [null, false])
+})
