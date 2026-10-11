@@ -183,8 +183,68 @@ remain available as native data. TARS derives individual event facts and
 assigns events to dispatch intervals, with approximate boundaries labeled for
 older lanes. Journal markers contain metadata and refer to native opening
 messages; they do not copy dispatch prompts. This command offers no navigation
-judgment. Progressive evidence queries and snapshot-based analysis are later
-iterations.
+judgment. Progressive evidence queries are described below; snapshot-based
+analysis remains a later iteration.
+
+### Progressive evidence queries
+
+Use the snapshot ID printed by `lane evidence` for read-only queries:
+
+```sh
+tars lane evidence overview --snapshot-id <id>
+tars lane evidence list_events --snapshot-id <id> --role author --action search
+tars lane evidence get_event_details --snapshot-id <id> --event-id <event-id>
+tars lane evidence get_event_content --snapshot-id <id> --event-id <event-id> --field <field-id> --line-start 1 --line-end 20
+```
+
+Responses are JSON. Pass `--cursor <nextCursor>` with the same command and
+filters to continue. The event listing supports block, source, message, role,
+event type, tool name, normalized action, exact path, directory subtree, exact
+search query, minimum visible output bytes, and inclusive timestamp filters.
+Path/query comparisons are literal and case-sensitive; subtree matching uses
+a directory separator, so `src` does not match `src-old`. Paths are not
+resolved against the current filesystem. There are no regex, aggregation or
+SQL commands. Records without classified paths remain in the unfiltered list.
+
+Events carry native source position, compaction context, block uncertainty,
+typed attributes and content-field references. Ordering is stable within each
+source: OpenCode native record order; Codex known timestamps then native
+position, with untimed records last. Different sources have independent
+context IDs. Uncertain Codex compaction ordering is reported as unknown.
+Paired Codex tool/terminal records remain separate and linked; counts describe
+records and must not be interpreted as counts of executed commands.
+
+`get_event_details` lists one level of native fields. Use a returned field ID
+or `--field-path <JSON-pointer>` to descend into an object/array. Large values
+remain references. `get_event_content` retrieves string fields by ID; it
+supports one-based inclusive line ranges or zero-based byte ranges with an
+exclusive end. Text with no line breaks uses byte ranges. A selected range may
+still require multiple pages; byte endpoints must land on UTF-8 character
+boundaries. Long native field names are accessible with `--field-key` and
+their field ID. OpenCode parent message events expose references to their
+text parts and a source/message filter to retrieve all parts.
+
+Overview/events/details responses are capped at 16 KiB and 4,000 estimated
+tokens; content responses at 8 KiB and 2,000 estimated tokens. Caps include
+the final JSON envelope, escaping and stdout newline. Page sizes follow these
+limits rather than an event-count limit. Each response reports its serialized
+bytes, estimated tokens and counting method. Install the pinned local
+tokenizer with:
+
+```sh
+npm --prefix automations/review-loop ci --ignore-scripts
+```
+
+The tokenizer uses locally installed `o200k_base` ranks; no evidence is sent
+to a provider or downloaded during queries. When unavailable, responses label
+the fallback estimate of four characters per token. Estimates describe the
+response and are not a measurement of the analyst's model or session context.
+
+Operator queries acquire a short reader lease and release it after closing
+SQLite. A future analyst launcher can hold a lease for the entire analysis;
+queries borrowing that lease perform no cache writes. Queries open no lane
+state database and never re-collect sources. Snapshot-based analyst launching
+and structured report generation remain the next iteration.
 
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is

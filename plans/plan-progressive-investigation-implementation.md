@@ -5,7 +5,7 @@ This sequence implements the decisions in [the progressive evidence proposal](pr
 1. **Dispatch boundaries — completed and pushed.** Journal unique IDs, match delivered native messages, build lane-wide intervals, and retain approximate boundaries for older lanes. Issue 75 smoke assigned all 109 navigation events, including the author's post-approval activity; new ID matching is covered by fixtures.
 2. **SQLite storage foundation — completed and pushed.** Add immutable snapshots, source/block/event/content tables, content deduplication, a versioned native normalization inventory, lossless chosen-artifact reconstruction, atomic publication, seven-day expiry, forced refresh, listing and deletion APIs. This is a library iteration; the existing CLI remains the smoke surface for lane behavior. New storage tests use both harness fixtures and isolated temporary cache directories. No analyst or operator CLI reads this database yet.
 3. **Connect collection and cache lifecycle — completed and pushed.** Connect both native-source collectors and block attribution to the storage foundation. Replace `lane evidence --index` with ordinary snapshot preparation and `--force`; expose indexes/remove-index/prune-indexes. Retain source availability and upstream gaps, incorporate dispatch markers without prompt duplication, and handle large exports. Serialize cache mutation, implement analyst lease acquisition/release and crash recovery before enabling automatic deletion around readers. Live smoke: create issue 75 snapshot, reconstruct/compare artifacts, reuse without exports, force a second snapshot, verify sizes, and clean up only the selected cache.
-4. **Progressive read-only CLI.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
+4. **Progressive read-only CLI — implemented, awaiting review and live smoke.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
 5. **Questions, report and analyst.** Implement common dispatch guidance, navigation built-in and ad hoc questions, structured answer-file protocol, hybrid inline citations, self-validation CLI and deterministic Markdown rendering. Use a separate Codex analyst with read-only repository/cache access and a writable private answer directory. Reuse preparation implicitly; require both role sources; remove the whole-projection budget gate. Validate final answers and permit one correction in the same session. Smoke a real investigation, inspect its evidence and report, confirm main role sessions are untouched, and test cleanup.
 
 ## Storage foundation contract
@@ -78,3 +78,49 @@ The initial smoke wrapper routed OpenCode through an extra `rtk proxy` process
 and reproduced its known 65,536-byte export truncation. Using the production
 collector's direct regular-file stdout resolved this test-harness problem; no
 product changes were needed. Live smoke is complete; iteration 3 is pushed.
+
+## Iteration 4 implementation notes
+
+The four JSON query commands sit under `lane evidence`: `overview`,
+`list_events`, `get_event_content`, and `get_event_details`, each bound to a
+snapshot ID. This iteration exposes evidence retrieval only; it does not
+launch an analyst or replace the existing investigation path yet.
+
+Snapshot version 3 adds indexed factual filter columns and an `event_fields`
+tree. Each field has an event-local stable ID, parent ID, native key, ordinal,
+kind, and scalar value/content reference. Objects/arrays are traversed one
+level at a time. This makes every uncommon field accessible without eagerly
+serializing it into a details response. Storage chunks stay internal. Large
+native field keys have a separate key-text retrieval mode. Both artifacts
+remain reconstructible through the existing native representation.
+
+Filters run before pagination and combine with AND. Paths match any normalized
+target; subtree matching respects separators. Search queries remain exact.
+Source/message filters allow traversing an OpenCode parent message's parts.
+Stable source ordering uses OpenCode native positions and Codex timestamps
+where known. Context IDs are independent per native source; compaction IDs
+accompany later events. Untimed/tied Codex attribution is unknown, rather than
+inferred. Source bundles are not assumed to share uninterrupted context.
+
+Every success response is measured after final JSON serialization, including
+the newline: 16 KiB / 4,000 estimated tokens for overview/events/details;
+8 KiB / 2,000 for content. Opaque cursors bind to snapshot/version, command,
+filters, field and range. Byte ranges preserve UTF-8 character boundaries;
+long selected lines still paginate. The pinned `js-tiktoken` dependency uses
+local `o200k_base` ranks. A labeled four-character fallback handles missing
+dependencies without transmitting evidence. Token estimates cover only the
+returned response.
+
+Operator queries briefly lease snapshots; the library/CLI can instead borrow
+a live launcher's lease for fully read-only analyst queries. Query commands
+bypass the lane state database. The future analyst launcher owns/relinquishes
+the lifetime lease; no evidence access ledger is introduced.
+
+Automated tests cover long timelines, filters, cursors, Unicode and oversized
+lines, unknown/deep/wide fields, parent-message references, compaction context,
+response serialization and token estimates, CLI isolation and lease cleanup.
+The isolated staged checkout passed all 225 automated tests, including 20 new
+retrieval tests; it excludes the earlier uncommitted analyst implementation.
+Live smoke before pushing: rebuild issue 75 into a version-3 isolated cache,
+page both roles and block inventory, retrieve native message/output/detail
+fields, verify every byte/token cap and stable ordering, then remove the cache.

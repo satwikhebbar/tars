@@ -39,12 +39,18 @@ export function nativeArtifactRecords(native, { role, harness, sessionId, bundle
           targets: normalized.path ? [{ path: normalized.path, visibleContent: normalized.visible === true }] : [] }
         if (normalized.query !== null && normalized.query !== undefined) attributes.normalizedAction.query = normalized.query
       }
-      if (typeof normalized.visibleOutput === "string") {
-        attributes.visibleOutputBytes = Buffer.byteLength(normalized.visibleOutput)
-        attributes.outputCompleteness = "unknown"
-      }
       if (normalized.reason) attributes.normalizationLimit = normalized.reason
     }
+    // Derive display sizes from the native record, independent of legacy projections.
+    const output = harness === "opencode" && record.type === "tool" && record.state?.status === "completed"
+      ? record.state.output ?? record.state.metadata?.display?.text
+      : harness === "codex" && pointer.section === "terminal_operations"
+        ? record.result?.formatted_output ?? record.result?.stdout : undefined
+    if (typeof output === "string") {
+      attributes.visibleOutputBytes = Buffer.byteLength(output)
+      attributes.outputCompleteness = "unknown"
+    }
+    if (type === "tool_call" && !attributes.name) attributes.name = record.tool ?? record.kind?.type ?? "unknown"
     const event = { id: `${sourceId}:${events.length}`, sourceId, role, type, position: events.length,
       pointer, attributes, extra: record }
     if (Number.isFinite(time)) event.time = time

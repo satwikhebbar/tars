@@ -3,8 +3,9 @@ import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "no
 import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
+import { orderEvidenceEvents, storeEventFields } from "./investigation-fields.mjs"
 
-export const SNAPSHOT_VERSION = 2
+export const SNAPSHOT_VERSION = 3
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const CHUNK_BYTES = 8192
 
@@ -75,6 +76,16 @@ export class EvidenceSnapshots {
           native_position INTEGER, time_ms REAL, metadata_json TEXT NOT NULL, extra_json TEXT NOT NULL);
         CREATE INDEX events_block ON events(block_id, native_position);
         CREATE INDEX events_role_type ON events(role, event_type, time_ms);
+        CREATE TABLE event_fields (event_id TEXT NOT NULL REFERENCES events(event_id), field_id TEXT NOT NULL,
+          parent_id TEXT, ordinal INTEGER NOT NULL, key_json TEXT NOT NULL, kind TEXT NOT NULL,
+          value_json TEXT, text_bytes INTEGER, line_count INTEGER, field_path TEXT NOT NULL,
+          PRIMARY KEY(event_id, field_id));
+        CREATE INDEX fields_parent ON event_fields(event_id, parent_id, ordinal);
+        CREATE INDEX fields_path ON event_fields(event_id, field_path);
+        CREATE TABLE event_facts (event_id TEXT PRIMARY KEY REFERENCES events(event_id), timeline_position INTEGER NOT NULL,
+          tool_name TEXT, action TEXT, query TEXT, targets_json TEXT NOT NULL, visible_output_bytes INTEGER, message_id TEXT);
+        CREATE INDEX facts_order ON event_facts(timeline_position);
+        CREATE INDEX facts_action ON event_facts(action, tool_name);
         CREATE TABLE event_content_chunks (content_id TEXT NOT NULL, chunk_no INTEGER NOT NULL,
           text TEXT NOT NULL, bytes INTEGER NOT NULL, PRIMARY KEY(content_id, chunk_no));
       `)
@@ -85,11 +96,16 @@ export class EvidenceSnapshots {
         db.prepare("INSERT INTO sources VALUES (?, ?, ?)").run(source.id,
           JSON.stringify(source.metadata), JSON.stringify(store.pack(source.native)))
       }
-      for (const event of evidence.events) {
+      for (const [timelinePosition, event] of orderEvidenceEvents(evidence.events, evidence.sources).entries()) {
         const { extra = {}, ...metadata } = event
         db.prepare("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(event.id,
           event.sourceId ?? null, event.blockId ?? null, event.role, event.type,
           event.position ?? null, event.time ?? null, JSON.stringify(store.pack(metadata)), JSON.stringify(store.pack(extra)))
+        const action = event.attributes?.normalizedAction
+        db.prepare("INSERT INTO event_facts VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, timelinePosition,
+          event.attributes?.name ?? null, action?.kind ?? null, action?.query ?? null,
+          JSON.stringify(action?.targets ?? []), event.attributes?.visibleOutputBytes ?? null, event.pointer?.messageId ?? null)
+        storeEventFields(db, event.id, JSON.parse(JSON.stringify({ ...metadata, extra })), store.pack)
       }
       db.exec("COMMIT")
       db.close(); db = null
@@ -147,7 +163,7 @@ export class EvidenceSnapshots {
         await rename(pending, directory)
       } finally { await rm(pending, { recursive: true, force: true }) }
       let released = false
-      return { snapshot, release: async () => {
+      return { snapshot, leaseId, release: async () => {
         if (released) return
         await this.mutate(() => rm(directory, { recursive: true, force: true }))
         released = true

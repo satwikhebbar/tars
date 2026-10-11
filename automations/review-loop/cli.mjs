@@ -18,6 +18,7 @@ import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
 import { inspectLaneEvidence } from "./lib/investigation-evidence.mjs"
 import { prepareLaneEvidence } from "./lib/investigation-prepare.mjs"
 import { EvidenceSnapshots } from "./lib/investigation-snapshot.mjs"
+import { queryEvidence } from "./lib/investigation-query.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -51,6 +52,27 @@ async function main() {
       "reviewer-model": { type: "string" },
       investigate: { type: "string" },
       "snapshot-id": { type: "string" },
+      "reader-lease": { type: "string" },
+      cursor: { type: "string" },
+      "event-id": { type: "string" },
+      "block-id": { type: "string" },
+      "source-id": { type: "string" },
+      "message-id": { type: "string" },
+      "event-type": { type: "string" },
+      "tool-name": { type: "string" },
+      action: { type: "string" },
+      "path-under": { type: "string" },
+      query: { type: "string" },
+      "min-visible-output-bytes": { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+      field: { type: "string" },
+      "field-path": { type: "string" },
+      "field-key": { type: "boolean", default: false },
+      "line-start": { type: "string" },
+      "line-end": { type: "string" },
+      "byte-start": { type: "string" },
+      "byte-end": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -63,6 +85,10 @@ async function main() {
   const command = positionals[0] ?? "help"
   if (values.help) {
     printUsage()
+    return
+  }
+  if (command === "lane" && positionals[1] === "evidence" && positionals[2]) {
+    await evidenceQuery({ method: positionals[2], values })
     return
   }
   if (command === "lane" && ["indexes", "remove-index", "prune-indexes"].includes(positionals[1])) {
@@ -229,6 +255,34 @@ async function evidenceCache({ action, values }) {
   }
 }
 
+async function evidenceQuery({ method, values }) {
+  const number = (key) => {
+    if (values[key] === undefined) return undefined
+    if (!/^\d+$/.test(values[key]) || !Number.isSafeInteger(Number(values[key]))) throw new Error(`--${key} must be a nonnegative integer.`)
+    return Number(values[key])
+  }
+  const time = (key) => {
+    if (values[key] === undefined) return undefined
+    const value = /^\d+$/.test(values[key]) ? Number(values[key]) : Date.parse(values[key])
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`--${key} must be an ISO timestamp or Unix milliseconds.`)
+    return value
+  }
+  const filters = {}
+  for (const [flag, key] of [["block-id", "blockId"], ["source-id", "sourceId"], ["message-id", "messageId"],
+    ["role", "role"], ["event-type", "eventType"], ["tool-name", "toolName"], ["action", "action"],
+    ["path", "path"], ["path-under", "pathUnder"], ["query", "query"]]) {
+    if (values[flag] !== undefined) filters[key] = values[flag]
+  }
+  for (const [key, value] of [["minVisibleOutputBytes", number("min-visible-output-bytes")], ["from", time("from")], ["to", time("to")]]) {
+    if (value !== undefined) filters[key] = value
+  }
+  const answer = await queryEvidence({ snapshotId: values["snapshot-id"], method, filters,
+    cursor: values.cursor, readerLease: values["reader-lease"], eventId: values["event-id"],
+    field: values.field, fieldPath: values["field-path"], fieldKey: values["field-key"],
+    lineStart: number("line-start"), lineEnd: number("line-end"), byteStart: number("byte-start"), byteEnd: number("byte-end") })
+  console.log(JSON.stringify(answer))
+}
+
 async function recover({ values, state }) {
   if (!values.worktree) throw new Error("lane recover requires --worktree <path>")
   if (!values.role) throw new Error("lane recover requires --role author or --role reviewer")
@@ -335,6 +389,10 @@ function printUsage() {
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   tars lane evidence (--worktree <path> | --issue <number>) [--force]
+  tars lane evidence overview --snapshot-id <id> [--cursor <cursor>]
+  tars lane evidence list_events --snapshot-id <id> [--role author|reviewer] [--block-id <id>] [--event-type <type>] [--tool-name <name>] [--action <kind>] [--path <exact-path> | --path-under <directory>] [--query <exact-query>] [--min-visible-output-bytes <bytes>] [--from <time>] [--to <time>] [--cursor <cursor>]
+  tars lane evidence get_event_content --snapshot-id <id> --event-id <id> --field <field-id> [--line-start <line>] [--line-end <line>] [--byte-start <byte>] [--byte-end <byte>] [--cursor <cursor>]
+  tars lane evidence get_event_details --snapshot-id <id> --event-id <id> [--field <field-id> | --field-path <JSON-pointer>] [--cursor <cursor>]
   tars lane indexes
   tars lane remove-index --snapshot-id <id>
   tars lane prune-indexes
