@@ -16,7 +16,8 @@ import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
 import { inspectLaneEvidence } from "./lib/investigation-evidence.mjs"
-import { summarizeNavigation } from "./lib/investigation-metrics.mjs"
+import { prepareLaneEvidence } from "./lib/investigation-prepare.mjs"
+import { EvidenceSnapshots } from "./lib/investigation-snapshot.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -49,7 +50,7 @@ async function main() {
       "author-model": { type: "string" },
       "reviewer-model": { type: "string" },
       investigate: { type: "string" },
-      index: { type: "boolean", default: false },
+      "snapshot-id": { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -62,6 +63,10 @@ async function main() {
   const command = positionals[0] ?? "help"
   if (values.help) {
     printUsage()
+    return
+  }
+  if (command === "lane" && ["indexes", "remove-index", "prune-indexes"].includes(positionals[1])) {
+    await evidenceCache({ action: positionals[1], values })
     return
   }
   const state = new StateStore(values.state ?? defaultStatePath())
@@ -194,32 +199,34 @@ async function evidence({ values, state }) {
   const worktreePath = values.worktree
     ? await realpath(values.worktree)
     : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
-  const result = await inspectLaneEvidence({ state, aoe: new AoeClient(), worktreePath, includeIndex: values.index })
-  console.log(`Native evidence inventory started ${result.asOf} for ${worktreePath}`)
-  for (const [role, source] of Object.entries(result.roles)) {
+  const result = await prepareLaneEvidence({ state, aoe: new AoeClient(), worktreePath, force: values.force })
+  console.log(`Evidence snapshot ${result.reused ? "reused" : "created"}: ${result.snapshotId}`)
+  console.log(`Snapshot cutoff: ${result.cutoff}; expires: ${result.expiresAt}`)
+  for (const [role, source] of Object.entries(result.coverage)) {
     const detail = source.harness === "codex"
       ? `${source.bundleCount ?? 0} bundles, ${source.reducedBytes ?? 0} reduced bytes`
       : `${source.bytes ?? 0} export bytes, ${source.messageCount ?? "unknown"} messages, session ${source.nativeSessionId ?? "unknown"}`
     console.log(`${role}: ${source.status} (${source.harness})${source.status === "unavailable" ? `: ${source.reason}` : `; ${detail}`}`)
-    for (const gap of source.gaps ?? []) console.log(`  gap: ${gap}`)
-    if (values.index && source.segments) {
-      const events = source.segments.flatMap((segment) => segment.events)
-      const counts = Object.fromEntries(["read", "search", "filename-only", "compaction", "unknown", "other"]
-        .map((kind) => [kind, events.filter((event) => event.kind === kind).length]))
-      console.log(`  transient index: ${source.segments.length} segments; ${JSON.stringify(counts)}`)
-      if (counts.unknown) console.log(`  coverage gap: ${counts.unknown} shell/tool events could not be classified by the supported grammar`)
-      const metrics = summarizeNavigation(source.segments)
-      console.log(`  measured lower bounds: ${metrics.observedFileBreadthLowerBound} files with visible content; ${metrics.repeatedFullReads.length} confirmed full rereads; ${metrics.repeatedExactSearches.length} exact repeated searches`)
+  }
+  for (const gap of result.gaps) console.log(`  coverage gap: ${gap}`)
+  console.log(`SQLite: ${result.directory}/evidence.sqlite (${result.sizeBytes} bytes; ${result.eventCount} events)`)
+  console.log("Evidence cached only; progressive analysis is not available yet.")
+}
+
+async function evidenceCache({ action, values }) {
+  const cache = new EvidenceSnapshots()
+  if (action === "remove-index") {
+    if (!values["snapshot-id"]) throw new Error("lane remove-index requires --snapshot-id <id>")
+    await cache.remove(values["snapshot-id"])
+    console.log(`Removed evidence snapshot ${values["snapshot-id"]}`)
+  } else if (action === "prune-indexes") {
+    const removed = await cache.prune()
+    console.log(`Pruned ${removed.length} expired evidence snapshots`)
+  } else {
+    for (const snapshot of await cache.list()) {
+      console.log(`${snapshot.snapshotId}\t${snapshot.usable ? "usable" : "expired/incompatible"}\t${snapshot.sizeBytes} bytes\texpires=${snapshot.expiresAt}\t${snapshot.directory}`)
     }
   }
-  if (values.index) {
-    for (const block of result.blocks) {
-      const count = result.roles[block.role].segments?.flatMap((segment) => segment.events)
-        .filter((event) => event.blockId === block.id).length ?? 0
-      if (count || block.handoffId) console.log(`  block ${block.id}: ${count} events${block.headCommit ? `, commit ${block.headCommit}` : ""}`)
-    }
-  }
-  console.log("Source inventory only; navigation analysis is not available yet.")
 }
 
 async function recover({ values, state }) {
@@ -327,7 +334,10 @@ function printUsage() {
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
-  tars lane evidence (--worktree <path> | --issue <number>) [--index]
+  tars lane evidence (--worktree <path> | --issue <number>) [--force]
+  tars lane indexes
+  tars lane remove-index --snapshot-id <id>
+  tars lane prune-indexes
   tars status`)
 }
 

@@ -3,8 +3,8 @@
 This sequence implements the decisions in [the progressive evidence proposal](proposal-progressive-investigation-evidence.md). It supersedes the earlier plan's transient projection and token-budget gate. Each iteration is independently tested and committed, followed by operator review and a local smoke check before pushing.
 
 1. **Dispatch boundaries — completed and pushed.** Journal unique IDs, match delivered native messages, build lane-wide intervals, and retain approximate boundaries for older lanes. Issue 75 smoke assigned all 109 navigation events, including the author's post-approval activity; new ID matching is covered by fixtures.
-2. **SQLite storage foundation — implemented, awaiting review.** Add immutable snapshots, source/block/event/content tables, content deduplication, a versioned native normalization inventory, lossless chosen-artifact reconstruction, atomic publication, seven-day expiry, forced refresh, listing and deletion APIs. This is a library iteration; the existing CLI remains the smoke surface for lane behavior. New storage tests use both harness fixtures and isolated temporary cache directories. No analyst or operator CLI reads this database yet.
-3. **Connect collection and cache lifecycle.** Connect both native-source collectors and block attribution to the storage foundation. Replace `lane evidence --index` with ordinary snapshot preparation and `--force`; expose indexes/remove-index/prune-indexes. Retain source availability and upstream gaps, incorporate dispatch markers without prompt duplication, and handle large exports. Serialize cache mutation, implement analyst lease acquisition/release and crash recovery before enabling automatic deletion around readers. Live smoke: create issue 75 snapshot, reconstruct/compare artifacts, reuse without exports, force a second snapshot, verify sizes, and clean up only the selected cache.
+2. **SQLite storage foundation — completed and pushed.** Add immutable snapshots, source/block/event/content tables, content deduplication, a versioned native normalization inventory, lossless chosen-artifact reconstruction, atomic publication, seven-day expiry, forced refresh, listing and deletion APIs. This is a library iteration; the existing CLI remains the smoke surface for lane behavior. New storage tests use both harness fixtures and isolated temporary cache directories. No analyst or operator CLI reads this database yet.
+3. **Connect collection and cache lifecycle — implemented, awaiting review and live smoke.** Connect both native-source collectors and block attribution to the storage foundation. Replace `lane evidence --index` with ordinary snapshot preparation and `--force`; expose indexes/remove-index/prune-indexes. Retain source availability and upstream gaps, incorporate dispatch markers without prompt duplication, and handle large exports. Serialize cache mutation, implement analyst lease acquisition/release and crash recovery before enabling automatic deletion around readers. Live smoke: create issue 75 snapshot, reconstruct/compare artifacts, reuse without exports, force a second snapshot, verify sizes, and clean up only the selected cache.
 4. **Progressive read-only CLI.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
 5. **Questions, report and analyst.** Implement common dispatch guidance, navigation built-in and ad hoc questions, structured answer-file protocol, hybrid inline citations, self-validation CLI and deterministic Markdown rendering. Use a separate Codex analyst with read-only repository/cache access and a writable private answer directory. Reuse preparation implicitly; require both role sources; remove the whole-projection budget gate. Validate final answers and permit one correction in the same session. Smoke a real investigation, inspect its evidence and report, confirm main role sessions are untouched, and test cleanup.
 
@@ -17,3 +17,34 @@ Snapshots live under `$XDG_CACHE_HOME/agent-review-loop/evidence-indexes/<hashed
 The executable normalization inventory is `lib/investigation-records.mjs`. It labels message, tool-call, compaction, native-accounting and unknown records and reuses the existing conservative per-command classifier. Terminal operation and native tool-call records remain separate, linked when their native call IDs agree. They must not be counted as two executed commands. Source-level session metadata is also preserved. The library does not compare reads, group queries or derive findings.
 
 Iteration 2 does not yet expose analyst content descriptors, bounded pages, context segments, or complete block assignment for this generic timeline. Those are required before switching investigation to the new store. The existing block module remains the authority for intervals; iteration 3 connects it to every normalized timeline record. The current collector's 16 MiB OpenCode diagnostic limit is unchanged until iteration 3.
+
+## Iteration 3 implementation notes
+
+`lane evidence` now prepares/reuses a snapshot, with `--force` rebuilding it;
+`lane indexes`, `lane remove-index --snapshot-id`, and `lane prune-indexes`
+expose the cache lifecycle. Presence-based reuse does not contact AoE or native
+sources. Collection still requires both sessions quiet; missing sources and
+historical gaps are recorded, with both-role requirements left to the eventual
+analyst launch. A lane key uses its initial dispatch marker (or its pair IDs for
+legacy lanes without that marker) to avoid reuse across lane relaunches.
+
+Generic events use the existing dispatch intervals. Matched opening messages
+belong to the new block even at its exact start timestamp; unrelated ties and
+untimed records remain unassigned. Dispatch journal metadata is indexed without
+copying prompt or handoff file bodies. Blocks expose opening and dispatch event
+IDs when available. Context segments remain iteration 4 work.
+
+A cache-level SQLite write transaction serializes mutations and releases on
+process death. Reader lease acquisition/removal shares that lock with cleanup.
+Dead local owners are reclaimable; unknown/foreign owners conservatively pin
+the snapshot. Pending leases are published atomically. Interrupted staging and
+pending lease directories are removed by the next mutation. The native JSON
+outputs remain temporary regular files; full snapshot collection removes the
+16 MiB diagnostic cap, but JSON parsing still uses memory proportional to the
+artifacts. Streaming JSON parsing remains a future optimization.
+
+Automated verification covers cache reuse/force, CLI cleanup, both harnesses,
+large exports, block association, historical gaps, changing dispatch journals,
+concurrent publishers, leases and SIGKILL recovery. The isolated staged checkout passed all 205 automated tests (13 new lifecycle/CLI tests). Before push, run the planned
+issue 75 smoke against an isolated cache: create/reuse/force, inspect source
+reconstruction and block assignment, report size, and remove the test snapshots.

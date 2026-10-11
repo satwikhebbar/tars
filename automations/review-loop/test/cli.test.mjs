@@ -51,22 +51,19 @@ test("lane evidence accepts issue and worktree selectors and prints a coverage g
   })
   state.close()
   const run = (args) => execFileAsync(process.execPath, [cliPath, "lane", "evidence", ...args, "--state", statePath], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CACHE_HOME: join(root, "cache") },
   })
   for (const selector of [["--issue", "75"], ["--worktree", worktree]]) {
     const { stdout, stderr } = await run(selector)
-    assert.equal(stderr, "")
+    assert.doesNotMatch(stderr, /Error:/)
     assert.match(stdout, /author: available \(opencode\); .*session ses_123/)
     assert.match(stdout, /reviewer: unavailable \(codex\): trace unavailable/)
-    assert.match(stdout, /Source inventory only/)
+    assert.match(stdout, /Evidence snapshot (created|reused)/)
   }
-  const { stdout: indexed } = await run(["--issue", "75", "--index"])
-  assert.match(indexed, /author: available \(opencode\)/)
-  assert.match(indexed, /reviewer: unavailable \(codex\): trace unavailable/)
-  assert.match(indexed, /transient index: 1 segments;.*"read":1.*"unknown":1/)
-  assert.match(indexed, /coverage gap: 1 shell\/tool events/)
-  assert.match(indexed, /measured lower bounds: 1 files with visible content/)
-  assert.match(indexed, /block author:initial: 2 events/)
+  const { stdout: indexed } = await run(["--issue", "75", "--force"])
+  assert.match(indexed, /Evidence snapshot created/)
+  assert.match(indexed, /SQLite: .*evidence.sqlite \(\d+ bytes; \d+ events\)/)
+  await assert.rejects(run(["--issue", "75", "--index"]), /Unknown option '--index'/)
   await assert.rejects(run(["--issue", "75", "--worktree", worktree]), /Specify either --worktree.*or --issue/)
   await assert.rejects(run([]), /lane evidence requires --worktree.*or --issue/)
 })

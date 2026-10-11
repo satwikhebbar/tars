@@ -147,32 +147,44 @@ tars lane start \
   --planning auto
 ```
 
-To prepare a newly launched Codex/OpenCode lane for the active-lane
-investigation probe, add `--investigate capture`. TARS configures native
-capture before either role starts and retains only active-lane evidence
-references. It does not retain a TARS evidence store or produce an investigation
-report yet.
+To prepare a newly launched Codex/OpenCode lane for active-lane investigation,
+add `--investigate capture`. TARS configures native capture before either role
+starts. Native harness stores remain authoritative.
 
-`tars lane evidence --issue <number>` (or `--worktree <path>`) checks that both
-AoE roles are idle or waiting and reads their native sources. It prints a
-source inventory and coverage gaps, not a navigation judgment. OpenCode export
-and Codex trace reductions use private temporary files that are removed when
-the command exits. A missing source for one role does not hide the other role's
-coverage. This diagnostic is available only while the capture-enabled lane is
-registered.
+`tars lane evidence --issue <number>` (or `--worktree <path>`) builds an
+immutable local SQLite snapshot when none is usable, checking that both AoE
+roles are idle or waiting before and after collection. It reports snapshot ID,
+cutoff, expiry, database size, source availability, and coverage gaps. A missing
+role does not hide the other role's evidence. This command requires an active,
+capture-enabled lane. It reuses an existing snapshot without exporting or
+checking for newer evidence; `--force` creates a fresh snapshot. Reuse does not
+extend expiry. The former `--index` option has been removed.
 
-Add `--index` to the same diagnostic to build a transient, source-neutral event
-index and print per-role counts. The index retains native event pointers and
-labels direct OpenCode reads separately from shell-inferred reads and searches.
-Its supported shell grammar is deliberately narrow: a single `cat`, `sed -n`,
-`head -n`, `rg -n`, `grep -n`, or `find` command, optionally behind `rtk`.
-Compound commands, pipes, redirects, expansion, scripts, and other forms remain
-unknown and appear as a coverage gap. The preview groups events into role blocks
-using recorded TARS dispatch times and retains each dispatched handoff's commit
-SHA; events with no usable time remain unassigned. It does not yet produce a
-navigation judgment. Its file-breadth and repetition counts are conservative
-lower bounds over supported observations; compaction resets repeat counters.
-It writes no index or report.
+Snapshots live under
+`$XDG_CACHE_HOME/agent-review-loop/evidence-indexes/<hashed-lane>/<snapshot-id>/`,
+defaulting to `~/.cache/agent-review-loop/evidence-indexes/`. Each private
+directory contains `evidence.sqlite` and `manifest.json`. A shared
+`cache-lock.sqlite` serializes collection and cleanup. Snapshots expire seven
+days after creation; preparation and `tars lane prune-indexes` remove expired,
+unleased snapshots. `tars lane indexes` lists snapshot IDs, sizes, expiry, and
+paths. `tars lane remove-index --snapshot-id <id>` removes only that snapshot.
+Cleanup never removes native exports or Codex trace bundles. Reader leases pin
+snapshots until release; dead local reader processes and interrupted staging
+builds are recovered during cache mutation.
+
+OpenCode exports and Codex reduced traces first go to private temporary files,
+removed on success or failure. Snapshot collection accepts OpenCode exports
+above the old 16 MiB diagnostic limit. JSON parsing and indexing still require
+memory proportional to the selected artifacts. The cache preserves all fields
+of the chosen JSON artifacts, with shared large strings stored in bounded
+chunks; reduced traces can omit upstream raw payloads. The versioned event
+normalization inventory is `lib/investigation-records.mjs`. Unsupported commands
+remain available as native data. TARS derives individual event facts and
+assigns events to dispatch intervals, with approximate boundaries labeled for
+older lanes. Journal markers contain metadata and refer to native opening
+messages; they do not copy dispatch prompts. This command offers no navigation
+judgment. Progressive evidence queries and snapshot-based analysis are later
+iterations.
 
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is

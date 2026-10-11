@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto"
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
+import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 
-export const SNAPSHOT_VERSION = 1
+export const SNAPSHOT_VERSION = 2
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const CHUNK_BYTES = 8192
 
@@ -41,9 +41,13 @@ export class EvidenceSnapshots {
       b.createdAt.localeCompare(a.createdAt) || b.snapshotId.localeCompare(a.snapshotId))
   }
 
-  async prepare({ laneId, force = false, collect }) {
+  async prepare(options) {
+    return this.mutate(() => this.prepareLocked(options))
+  }
+
+  async prepareLocked({ laneId, force = false, collect }) {
     if (typeof laneId !== "string" || !laneId) throw new Error("A lane identity is required.")
-    await this.prune()
+    await this.pruneLocked()
     if (!force) {
       const existing = (await this.list()).find((item) => item.laneId === laneId && item.usable)
       if (existing) return { ...existing, reused: true }
@@ -95,7 +99,7 @@ export class EvidenceSnapshots {
         asOf: evidence.asOf, cutoff: evidence.cutoff ?? evidence.asOf,
         sourceCount: evidence.sources.length, eventCount: evidence.events.length,
         sources: evidence.sources.map((source) => ({ sourceId: source.id, ...source.metadata })),
-        gaps: evidence.gaps ?? [], sizeBytes: (await stat(path)).size }
+        gaps: evidence.gaps ?? [], coverage: evidence.coverage ?? {}, sizeBytes: (await stat(path)).size }
       await writeFile(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 })
       const directory = join(parent, snapshotId)
       await rename(staging, directory)
@@ -106,23 +110,96 @@ export class EvidenceSnapshots {
     }
   }
 
-  async remove(id) {
+  async remove(id) { return this.mutate(() => this.removeLocked(id)) }
+
+  async removeLocked(id) {
     const snapshot = (await this.list()).find((item) => item.snapshotId === id)
     if (!snapshot) throw new Error(`Unknown evidence snapshot ${id}.`)
-    if ((await directories(join(snapshot.directory, "leases"))).length) throw new Error(`Evidence snapshot ${id} is in use.`)
+    if (await this.hasLeases(snapshot)) throw new Error(`Evidence snapshot ${id} is in use.`)
     await rm(snapshot.directory, { recursive: true })
   }
 
-  async prune() {
+  async prune() { return this.mutate(() => this.pruneLocked()) }
+
+  async pruneLocked() {
     const removed = []
     for (const snapshot of await this.list()) {
       if (Date.parse(snapshot.expiresAt) > +this.now()) continue
-      if ((await directories(join(snapshot.directory, "leases"))).length) continue
-      await this.remove(snapshot.snapshotId)
+      if (await this.hasLeases(snapshot)) continue
+      await this.removeLocked(snapshot.snapshotId)
       removed.push(snapshot.snapshotId)
     }
     return removed
   }
+
+  /** Acquire under the same lock as deletion; callers release after closing readers. */
+  async lease(id) {
+    return this.mutate(async () => {
+      const snapshot = (await this.list()).find((item) => item.snapshotId === id && item.usable)
+      if (!snapshot) throw new Error(`Unknown or expired evidence snapshot ${id}.`)
+      const leaseId = randomUUID()
+      const directory = join(snapshot.directory, "leases", leaseId)
+      const pending = join(snapshot.directory, `.lease-pending-${leaseId}`)
+      await mkdir(join(snapshot.directory, "leases"), { recursive: true, mode: 0o700 })
+      try {
+        await mkdir(pending, { mode: 0o700 })
+        await writeFile(join(pending, "owner.json"), JSON.stringify(owner()), { mode: 0o600 })
+        await rename(pending, directory)
+      } finally { await rm(pending, { recursive: true, force: true }) }
+      let released = false
+      return { snapshot, release: async () => {
+        if (released) return
+        await this.mutate(() => rm(directory, { recursive: true, force: true }))
+        released = true
+      } }
+    })
+  }
+
+  async hasLeases(snapshot) {
+    const parent = join(snapshot.directory, "leases")
+    for (const id of await directories(parent)) {
+      const directory = join(parent, id)
+      if (await deadOwner(directory)) await rm(directory, { recursive: true, force: true })
+    }
+    return (await directories(parent)).length > 0
+  }
+
+  /** All publishers, lease changes and removals share one local filesystem lock. */
+  async mutate(action) {
+    await mkdir(this.root, { recursive: true, mode: 0o700 })
+    await chmod(this.root, 0o700)
+    // SQLite releases this advisory write transaction even after SIGKILL.
+    // Evidence itself stays in separate immutable databases.
+    const lockPath = join(this.root, "cache-lock.sqlite")
+    const lock = new DatabaseSync(lockPath)
+    await chmod(lockPath, 0o600)
+    const deadline = Date.now() + 10000
+    try {
+      for (;;) {
+        try { lock.exec("BEGIN IMMEDIATE"); break }
+        catch (error) {
+          if (!/locked|busy/i.test(error.message)) throw error
+          if (Date.now() >= deadline) throw new Error("Evidence cache is busy; retry after the current collection finishes.")
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+      try {
+        // No publisher can still own staging while this lock is held.
+        for (const lane of await directories(this.root)) {
+          if (!/^[a-f0-9]{64}$/.test(lane)) continue
+          for (const id of await directories(join(this.root, lane))) {
+            const directory = join(this.root, lane, id)
+            if (id.startsWith(".staging-")) await rm(directory, { recursive: true, force: true })
+            else for (const entry of await directories(directory)) {
+              if (entry.startsWith(".lease-pending-")) await rm(join(directory, entry), { recursive: true, force: true })
+            }
+          }
+        }
+        return await action()
+      } finally { lock.exec("ROLLBACK") }
+    } finally { lock.close() }
+  }
+
 }
 
 /** Read-only reader. Reconstructing native data is for fidelity checks, not analyst paging. */
@@ -181,4 +258,19 @@ function laneKey(id) { return createHash("sha256").update(id).digest("hex") }
 async function directories(path) {
   try { return (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()).map((entry) => entry.name) }
   catch (error) { if (error.code === "ENOENT") return []; throw error }
+}
+
+function owner() { return { pid: process.pid, host: hostname() } }
+async function deadOwner(directory) {
+  try {
+    const record = JSON.parse(await readFile(join(directory, "owner.json"), "utf8"))
+    if (record.host !== hostname() || !Number.isInteger(record.pid) || record.pid <= 0) return false
+    try { process.kill(record.pid, 0); return false }
+    catch (error) { return error.code === "ESRCH" }
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) {
+      return false
+    }
+    throw error
+  }
 }

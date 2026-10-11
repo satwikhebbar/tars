@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+import { nativeArtifactRecords } from "./investigation-records.mjs"
 import { spawn } from "node:child_process"
 import { mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -10,7 +12,8 @@ const QUIET_STATES = new Set(["idle", "waiting"])
 const MAX_INVENTORY_PARSE_BYTES = 16 * 1024 * 1024
 
 /** A read-only preflight and native-source inventory for an active capture lane. */
-export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = nativeSources, now = () => new Date(), includeIndex = false }) {
+export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = nativeSources, now = () => new Date(), includeIndex = false, includeRecords = false }) {
+  includeIndex ||= includeRecords
   const lane = state.lane(worktreePath)
   if (!lane) throw new Error(`No active lane for ${worktreePath}.`)
   if (lane.investigationCapture !== "capture") throw new Error(`Lane ${worktreePath} was not started with --investigate capture.`)
@@ -22,25 +25,27 @@ export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = 
     const harness = lane[`${role}Harness`]
     let source
     try {
-      source = await sources.inspect({ role, harness, evidence, worktreePath, includeIndex })
+      source = await sources.inspect({ role, harness, evidence, worktreePath, includeIndex, includeRecords })
     } catch (error) {
       source = { status: "unavailable", reason: error instanceof Error ? error.message : String(error) }
     }
     if (includeIndex && evidence?.previous?.length) {
       const history = []
+      const artifacts = []
       const gaps = [...(source.gaps ?? [])]
       if (source.status === "unavailable") gaps.push(`current segment: ${source.reason}`)
       for (const [index, prior] of evidence.previous.entries()) {
         try {
-          const result = await sources.inspect({ role, harness, evidence: prior, worktreePath, includeIndex })
+          const result = await sources.inspect({ role, harness, evidence: prior, worktreePath, includeIndex, includeRecords })
           history.push(...result.segments ?? [])
+          artifacts.push(...result.artifacts ?? [])
           if (result.status !== "available") gaps.push(`prior segment ${index + 1}: ${result.gaps?.join("; ") ?? result.status}`)
         } catch (error) {
           gaps.push(`prior segment ${index + 1}: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
       const segments = [...history, ...(source.segments ?? [])]
-      source = { ...source, segments, gaps, status: gaps.length ? (segments.length ? "partial" : "unavailable") : source.status }
+      source = { ...source, segments, ...(includeRecords ? { artifacts: [...artifacts, ...(source.artifacts ?? [])] } : {}), gaps, status: gaps.length ? (segments.length ? "partial" : "unavailable") : source.status }
     }
     roles[role] = { harness, ...source }
   }
@@ -76,7 +81,8 @@ export const nativeSources = createNativeSources()
 
 export function createNativeSources(run = runToFile) {
   return {
-    async inspect({ role, harness, evidence, includeIndex = false }) {
+    async inspect({ role, harness, evidence, includeIndex = false, includeRecords = false }) {
+    includeIndex ||= includeRecords
     if (evidence?.status !== "available" || evidence.harness !== harness) {
       throw new Error(evidence?.reason ?? "Native evidence reference is unavailable.")
     }
@@ -87,7 +93,7 @@ export function createNativeSources(run = runToFile) {
         await run("opencode", ["export", evidence.nativeSessionId], output)
         const { size } = await stat(output)
         if (!size) throw new Error("OpenCode export was empty.")
-        if (size > MAX_INVENTORY_PARSE_BYTES) {
+        if (!includeRecords && size > MAX_INVENTORY_PARSE_BYTES) {
           return { status: "partial", nativeSessionId: evidence.nativeSessionId, bytes: size,
             gaps: ["Export exceeds the 16 MiB diagnostic parse limit; its structure was not checked."] }
         }
@@ -96,7 +102,9 @@ export function createNativeSources(run = runToFile) {
           throw new Error(`OpenCode export does not match native session ${evidence.nativeSessionId}.`)
         }
         return { status: "available", nativeSessionId: evidence.nativeSessionId, bytes: size, messageCount: native.messages.length,
-          ...(includeIndex ? { segments: [indexOpenCode(native, { role, sessionId: evidence.nativeSessionId })] } : {}) }
+          ...(includeIndex ? { segments: [indexOpenCode(native, { role, sessionId: evidence.nativeSessionId })] } : {}),
+          ...(includeRecords ? { artifacts: [nativeArtifactRecords(native, { role, harness,
+            sessionId: evidence.nativeSessionId, sourceId: sourceIdentity(role, harness, evidence.nativeSessionId) })] } : {}) }
       })
     }
     if (harness === "codex") {
@@ -108,6 +116,7 @@ export function createNativeSources(run = runToFile) {
         let bytes = 0
         const gaps = []
         const segments = []
+        const artifacts = []
         for (const [index, bundle] of bundles.entries()) {
           const bundlePath = join(evidence.traceRoot, bundle)
           try {
@@ -115,7 +124,14 @@ export function createNativeSources(run = runToFile) {
             const output = join(directory, `codex-${index}.json`)
             await run("codex", ["debug", "trace-reduce", bundlePath, "--output", output], output, { stdoutToFile: false })
             const size = (await stat(output)).size
-            if (includeIndex) segments.push(indexCodex(JSON.parse(await readFile(output, "utf8")), { role, bundle }))
+            if (includeIndex) {
+              const native = JSON.parse(await readFile(output, "utf8"))
+              const segment = indexCodex(native, { role, bundle })
+              const artifact = includeRecords ? nativeArtifactRecords(native, { role, harness, bundle,
+                sourceId: sourceIdentity(role, harness, bundlePath) }) : null
+              segments.push(segment)
+              if (artifact) artifacts.push(artifact)
+            }
             bytes += size
           } catch (error) {
             gaps.push(`${bundle}: ${error instanceof Error ? error.message : String(error)}`)
@@ -123,7 +139,7 @@ export function createNativeSources(run = runToFile) {
         }
         if (!bytes) throw new Error(`No Codex bundle could be reduced${gaps.length ? ` (${gaps.join("; ")})` : "."}`)
         return { status: gaps.length ? "partial" : "available", bundleCount: bundles.length, reducedBytes: bytes, gaps,
-          ...(includeIndex ? { segments } : {}) }
+          ...(includeIndex ? { segments } : {}), ...(includeRecords ? { artifacts } : {}) }
       })
     }
     throw new Error(`Unsupported native source: ${harness}.`)
@@ -153,4 +169,8 @@ export async function runToFile(command, args, output, { stdoutToFile = true } =
     child.kill()
     throw error
   } finally { await file?.close() }
+}
+
+function sourceIdentity(role, harness, identity) {
+  return `${role}:${harness}:${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`
 }

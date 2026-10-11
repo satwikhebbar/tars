@@ -55,7 +55,7 @@ test("failed collection and failed SQL insertion leave no published or staging s
   const bad = evidence(); bad.events.push(bad.events[0])
   await assert.rejects(cache.prepare({ laneId: "lane", collect: async () => bad }), /UNIQUE/)
   assert.deepEqual(await cache.list(), [])
-  for (const lane of await readdir(root)) assert.deepEqual(await readdir(join(root, lane)), [])
+  for (const lane of (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name)) assert.deepEqual(await readdir(join(root, lane)), [])
 })
 
 test("Unicode bodies, sparse unknown fields and reference-like native objects round-trip losslessly", async (t) => {
