@@ -5,7 +5,7 @@ This sequence implements the decisions in [the progressive evidence proposal](pr
 1. **Dispatch boundaries — completed and pushed.** Journal unique IDs, match delivered native messages, build lane-wide intervals, and retain approximate boundaries for older lanes. Issue 75 smoke assigned all 109 navigation events, including the author's post-approval activity; new ID matching is covered by fixtures.
 2. **SQLite storage foundation — completed and pushed.** Add immutable snapshots, source/block/event/content tables, content deduplication, a versioned native normalization inventory, lossless chosen-artifact reconstruction, atomic publication, seven-day expiry, forced refresh, listing and deletion APIs. This is a library iteration; the existing CLI remains the smoke surface for lane behavior. New storage tests use both harness fixtures and isolated temporary cache directories. No analyst or operator CLI reads this database yet.
 3. **Connect collection and cache lifecycle — completed and pushed.** Connect both native-source collectors and block attribution to the storage foundation. Replace `lane evidence --index` with ordinary snapshot preparation and `--force`; expose indexes/remove-index/prune-indexes. Retain source availability and upstream gaps, incorporate dispatch markers without prompt duplication, and handle large exports. Serialize cache mutation, implement analyst lease acquisition/release and crash recovery before enabling automatic deletion around readers. Live smoke: create issue 75 snapshot, reconstruct/compare artifacts, reuse without exports, force a second snapshot, verify sizes, and clean up only the selected cache.
-4. **Progressive read-only CLI — implemented, awaiting review and live smoke.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
+4. **Progressive read-only CLI — completed; automated and live smoke checks passed.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
 5. **Questions, report and analyst.** Implement common dispatch guidance, navigation built-in and ad hoc questions, structured answer-file protocol, hybrid inline citations, self-validation CLI and deterministic Markdown rendering. Use a separate Codex analyst with read-only repository/cache access and a writable private answer directory. Reuse preparation implicitly; require both role sources; remove the whole-projection budget gate. Validate final answers and permit one correction in the same session. Smoke a real investigation, inspect its evidence and report, confirm main role sessions are untouched, and test cleanup.
 
 ## Storage foundation contract
@@ -124,3 +124,30 @@ retrieval tests; it excludes the earlier uncommitted analyst implementation.
 Live smoke before pushing: rebuild issue 75 into a version-3 isolated cache,
 page both roles and block inventory, retrieve native message/output/detail
 fields, verify every byte/token cap and stable ordering, then remove the cache.
+
+### Iteration 4 live smoke — 2026-10-11
+
+Passed against exported commit `a39969b`, using lane 75's real native evidence,
+a read-only registry connection and an isolated version-3 cache. No session
+prompts were sent.
+
+- Both sources available: 514 events, four blocks. Paged the whole timeline
+  and each role separately, checking exact stored order and unique IDs without
+  omissions. Overview counts, boundary confidence and cutoff matched SQLite.
+- Combined role/block/event-type/tool/output-size filters and exact path
+  filters matched stored facts. Cursors rejected changed filters and a
+  different snapshot.
+- Retrieved field details and reconstructed a large native output exactly
+  across 270 content pages. A selected line range also spanned pages and
+  reconstructed exactly. All 499 successful responses met their respective
+  byte/token caps, measured with the local tokenizer: maximum response size
+  10,949 bytes, maximum estimated tokens 3,999.
+- Exercised the committed CLI with a borrowed reader lease. Snapshot hash and
+  lane registry/journal were unchanged; temporary leases were released. Removed
+  both test snapshots. The isolated cache was 12,877,824 bytes for lane 75.
+- This older lane has no matched opening-message excerpts or compaction events;
+  those cases remain verified by automated fixtures, not this live smoke.
+
+The first line-range assertion incorrectly expected a large selected range in
+one page. Following its continuation cursors fixed the smoke harness; no
+product changes were required.
