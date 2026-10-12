@@ -214,3 +214,29 @@ still protects against a destination appearing during analysis.
 
 All 257 automated tests pass. Live Codex permission enforcement and the actual
 lane 75 report remain the separate pre-push smoke gate.
+
+### Iteration 5 live smoke — 2026-10-12
+
+Passed against the committed implementation at `01b267c`, using lane 75's live
+author/reviewer sessions, a copy of the lane registry, and an isolated cache. The
+snapshot contained 514 events across four blocks and five sources, occupied
+12,877,824 bytes, and had both role sources available. Its ID was
+`6cd5dd76-f1cb-40ad-a61f-5b1d2adf3414`.
+
+| Check | Result |
+| --- | --- |
+| Live Codex permission boundary | Evidence CLI and repository metadata reads succeeded; private output was writable; exclusive sentinel writes to repository and cache were denied with `EPERM`. The probe analyst repaired an initial shell quoting error before completing the successful check. |
+| Built-in navigation question | 18 successful shell commands, including paged/filtered evidence, details/content retrieval and actual CLI self-validation; validated report rendered with inline citations and snapshot cutoff. |
+| Ad hoc handoff question | 18 successful shell commands and actual CLI self-validation; report described the author/reviewer relay, with approximate/unanchored boundaries explained. |
+| Explicit analyst model | Ad hoc invocation supplied `--analyst-model gpt-5.6-terra`; recorded Codex launch arguments confirmed it, without forwarding the OpenCode model. |
+| Markdown export | Navigation (5,207 bytes) and ad hoc (4,260 bytes) exports exactly matched their CLI output. |
+| Existing export destination | Immediate `EEXIST`, no analyst launch, no file change. |
+| Live cancellation | SIGINT after the first evidence command began produced a clear interruption failure, no Markdown output, removed answer directory, and terminated all four recorded processes in the analyst tree. |
+| Cleanup and original lane | No reader leases remained; both completed analyst directories were removed. Live lane row, dispatch journal, repository status, OpenCode native export and all 101 Codex trace files were unchanged. Author remained idle; reviewer remained waiting. |
+
+The reports passed reference/schema validation and were inspected for evidence use
+and uncertainty disclosure; this smoke is not an independent verification of every
+analyst judgment. The isolated cache and test checkout were removed after verification.
+Operator Markdown exports remain at `/tmp/tars-iteration-5-smoke-reports/` for review.
+The live smoke gate for iteration 5 is complete; the automated suite already passed
+all 257 tests in an isolated checkout of the exact staged implementation.
