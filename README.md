@@ -147,6 +147,57 @@ tars lane start \
   --planning auto
 ```
 
+## Investigate an active lane
+
+Investigations help an operator reflect on how a lane's author and reviewer
+worked. The built-in **repository navigation efficiency** question examines
+repeated reads/searches, the breadth of files explored, and large outputs in
+the context of the task. It reports observed behavior, supporting evidence,
+and possible repository friction; the analyst decides whether that behavior
+suggests avoidable effort. You can also ask an ad-hoc question.
+
+### Quick start
+
+Enable capture when creating a new lane:
+
+```bash
+tars lane start \
+  --repo /absolute/path/to/main-checkout \
+  --issue 21 \
+  --author opencode --reviewer codex \
+  --planning never \
+  --investigate capture
+```
+
+Once both roles are idle or waiting, generate a report:
+
+```bash
+tars lane investigate --issue 21 --output /absolute/path/to/navigation-report.md
+```
+
+This collects evidence automatically if there is no usable cached snapshot,
+launches a read-only Codex analyst, validates its answer, and prints the
+Markdown report while saving it to the requested file. Omit `--output` for
+terminal output only. The destination must not already exist.
+
+To investigate activity that occurred since an earlier collection, refresh
+the snapshot first:
+
+```bash
+tars lane evidence --issue 21 --force
+tars lane investigate --issue 21 --output /absolute/path/to/navigation-report-new.md
+```
+
+Investigations support active, capture-enabled lanes only, with Codex/OpenCode
+in both roles. They do not investigate closed lanes or enable capture
+retroactively for an already-running pair. Codex must also be installed and
+authenticated to run the analyst, including for an OpenCode-authored lane.
+Both roles' evidence is required for investigation; smaller recorded gaps
+remain visible to the analyst. The analyst uses your harness account and
+incurs model usage.
+
+### Capture and cached evidence
+
 To prepare a newly launched Codex/OpenCode lane for active-lane investigation,
 add `--investigate capture`. TARS configures native capture before either role
 starts. Native harness stores remain authoritative.
@@ -183,8 +234,8 @@ remain available as native data. TARS derives individual event facts and
 assigns events to dispatch intervals, with approximate boundaries labeled for
 older lanes. Journal markers contain metadata and refer to native opening
 messages; they do not copy dispatch prompts. This command offers no navigation
-judgment. Progressive evidence queries are described below; snapshot-based
-analysis remains a later iteration.
+judgment. Use `lane investigate` for analysis or the progressive queries below
+to inspect the evidence directly.
 
 ### Progressive evidence queries
 
@@ -258,12 +309,41 @@ SQLite. The analyst launcher holds a lease for the entire analysis;
 queries borrowing that lease perform no cache writes. Queries open no lane
 state database and never re-collect sources.
 
+### Questions and reports
+
 Run `tars lane investigate --issue <number>` (or `--worktree <path>`) for
 repository navigation diagnosis. The default built-in is `navigation-efficiency`;
 its versioned instructions live in `automations/review-loop/questions/`.
 Use `--ad-hoc "<question>"` with optional `--report-guidance "<instructions>"`
 for another question. Both modes share evidence retrieval, analysis guidance,
 report structure and validation.
+
+```bash
+# Explicitly select the built-in question and analyst model.
+tars lane investigate --issue 21 \
+  --question navigation-efficiency --analyst-model <codex-model> \
+  --output /absolute/path/to/navigation-report.md
+
+# Ask your own question using the same evidence and report protocol.
+tars lane investigate --issue 21 \
+  --ad-hoc "Did the author and reviewer follow the task's stated constraints?" \
+  --report-guidance "Distinguish observed actions from uncertain interpretations." \
+  --output /absolute/path/to/constraints-report.md
+```
+
+Reports contain scope, a summary, findings, limitations, and a conclusion.
+They may declare partial scope when the analyst cannot support a whole-lane
+conclusion. Content sizes use labeled token estimates where available, rather
+than claiming exact billed usage. Event citations are snapshot-local IDs;
+the report includes a command for looking them up while the cache exists.
+Repository citations identify a commit and path, with an optional line.
+
+To review or change the instructions, see the
+[shared analyst prompt](automations/review-loop/lib/investigation-analyst.mjs),
+[built-in navigation guidance](automations/review-loop/questions/navigation-efficiency.md),
+and [question registry](automations/review-loop/lib/investigation-question.mjs).
+Ad-hoc question text and optional report guidance replace the built-in
+instructions; shared retrieval guidance and the report protocol still apply.
 
 Investigation implicitly prepares or reuses the lane's immutable SQLite snapshot.
 Both AoE sessions must be idle or waiting at launch, and both role evidence sources
@@ -309,6 +389,8 @@ validation/process failure, timeout or handled interruption. SIGKILL cannot run
 cleanup; the next cache mutation reclaims its dead owner's lease, while the OS may
 retain the private temporary run directory until normal temporary-file cleanup.
 
+### Native capture locations and launch troubleshooting
+
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is
 unset, the location is `~/.codex/tars/rollout-traces/...`. This is a TARS
@@ -335,14 +417,6 @@ the paths have not been acknowledged, open the AoE TUI, create a temporary
 Codex or OpenCode session, review and accept the hook acknowledgement dialog,
 then remove the temporary session and retry.
 
-```bash
-tars lane start \
-  --repo /absolute/path/to/main-checkout \
-  --issue 21 \
-  --author opencode --reviewer codex \
-  --planning never \
-  --investigate capture
-```
 
 Use `--planning always` to require a plan-first lane, or `--planning never`
 for direct implementation. A plan-first lane can use a configured planning

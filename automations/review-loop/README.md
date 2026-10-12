@@ -56,6 +56,31 @@ For `planning: required`, TARS launches its setup-installed OpenCode `tars-plan`
 
 For `planning: not_required`, TARS follows the original direct Build → code-review loop. The command prints the created worktree and both session IDs, then sends the appropriate opening issue prompt. It does not start another polling loop.
 
+### Investigate a lane
+
+For a newly launched lane with Codex/OpenCode in both roles, add
+`--investigate capture` to `lane start`. Once both sessions are idle or waiting,
+run:
+
+```bash
+tars lane investigate --issue 44 --output /absolute/path/to/navigation-report.md
+```
+
+The default built-in question diagnoses repository navigation efficiency across
+both roles. TARS prepares a cached evidence snapshot and launches a read-only
+Codex analyst, then validates and renders its report as Markdown. Codex must be
+installed and authenticated even when OpenCode is the author. For a different
+question, use `--ad-hoc "<question>"` and optional `--report-guidance`.
+
+Existing snapshots are reused. To include newer lane activity, run
+`tars lane evidence --issue 44 --force` before investigating again. Reports
+are printed to the terminal; `--output` also saves a file and refuses to
+overwrite an existing one. Closed lanes are not supported.
+
+See [Investigate an active lane](../../README.md#investigate-an-active-lane)
+for capture setup, question examples, evidence queries, citation lookup,
+cache cleanup, and analyst permissions.
+
 ### Claude Code productivity note
 
 TARS currently launches Claude Code with its normal `claude` command, so its
