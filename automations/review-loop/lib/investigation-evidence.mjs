@@ -66,7 +66,7 @@ export async function inspectLaneEvidence({ state, aoe, worktreePath, sources = 
   return { worktreePath, asOf, roles, ...(includeIndex ? { blocks } : {}) }
 }
 
-async function assertQuiet(aoe, lane) {
+export async function assertQuiet(aoe, lane) {
   const runtime = await aoe.runtimeSessions({ includeDead: true })
   for (const role of ["author", "reviewer"]) {
     const id = lane[`${role}SessionId`]

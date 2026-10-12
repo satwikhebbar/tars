@@ -241,10 +241,60 @@ the fallback estimate of four characters per token. Estimates describe the
 response and are not a measurement of the analyst's model or session context.
 
 Operator queries acquire a short reader lease and release it after closing
-SQLite. A future analyst launcher can hold a lease for the entire analysis;
+SQLite. The analyst launcher holds a lease for the entire analysis;
 queries borrowing that lease perform no cache writes. Queries open no lane
-state database and never re-collect sources. Snapshot-based analyst launching
-and structured report generation remain the next iteration.
+state database and never re-collect sources.
+
+Run `tars lane investigate --issue <number>` (or `--worktree <path>`) for
+repository navigation diagnosis. The default built-in is `navigation-efficiency`;
+its versioned instructions live in `automations/review-loop/questions/`.
+Use `--ad-hoc "<question>"` with optional `--report-guidance "<instructions>"`
+for another question. Both modes share evidence retrieval, analysis guidance,
+report structure and validation.
+
+Investigation implicitly prepares or reuses the lane's immutable SQLite snapshot.
+Both AoE sessions must be idle or waiting at launch, and both role evidence sources
+must be available (partial sources with recorded gaps are allowed). Collection
+prints the snapshot time, cutoff, size and gaps. Reuse does not refresh native
+evidence: run `lane evidence --force` before investigating newer activity. Work
+resuming after launch does not change the fixed snapshot being analyzed.
+
+A separate Codex analyst receives the first bounded overview page and the
+progressive evidence CLI. It chooses which events/bodies to inspect and derives
+patterns itself. There is no whole-projection token gate, block-selection mode,
+query audit trail or session token budget. The harness manages its context;
+per-response token estimates help it page evidence. Codex is also used for an
+OpenCode-authored lane. The model defaults to the lane's Codex author/reviewer
+model when present; `--analyst-model <model>` overrides it. The analyst incurs
+model cost.
+
+The analyst runs from a private temporary directory with `workspace-write`,
+no added writable roots, no writable shared temporary directories, no network
+access for its tools, and no approval escalation. Repository/cache access is
+read-only. User configuration and exec rules are not loaded for this constrained
+session. A lifetime reader lease protects the snapshot; query commands borrow
+it without writing to the cache. The session is persisted by Codex so a correction
+can resume it; TARS does not store analyst transcripts or reports.
+
+The analyst writes `answer.json`, following the generic version-one shape in
+`lib/investigation-report.mjs`: snapshot/question identity, whole-lane or partial
+scope, Markdown summary, findings with block IDs and Markdown analysis, material
+limitations, conclusion and a citation registry. Inline `{{cite:<id>}}` markers
+place citations beside the claims they support. Registry entries identify either
+an indexed event or a repository commit/path with an optional line. Short relevant
+excerpts are allowed. The analyst self-validates using
+`lane investigate validate-report --file <answer.json> --context <assigned-context.json>`.
+This command opens no lane registry. TARS validates the file again after completion,
+checks schema and references (repository commit/path in local Git, not line meaning
+or diagnosis), and requests at most one correction in the same session.
+
+TARS deterministically renders valid reports as Markdown. `--output <markdown-path>`
+exports the report; otherwise it is printed only. Existing files are never
+overwritten. Snapshot time and cutoff appear in the report. The temporary answer,
+context and process-output files are removed, and the lease is released on success,
+validation/process failure, timeout or handled interruption. SIGKILL cannot run
+cleanup; the next cache mutation reclaims its dead owner's lease, while the OS may
+retain the private temporary run directory until normal temporary-file cleanup.
 
 Codex's optional rollout trace bundles are written under
 `$CODEX_HOME/tars/rollout-traces/lane-<lane-id>/<role>/`. When `CODEX_HOME` is

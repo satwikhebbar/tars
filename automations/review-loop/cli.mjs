@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process"
-import { realpath } from "node:fs/promises"
+import { realpath, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -15,10 +15,13 @@ import { runHarnessPreflight } from "./lib/preflight.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
-import { inspectLaneEvidence } from "./lib/investigation-evidence.mjs"
+import { assertQuiet } from "./lib/investigation-evidence.mjs"
 import { prepareLaneEvidence } from "./lib/investigation-prepare.mjs"
 import { EvidenceSnapshots } from "./lib/investigation-snapshot.mjs"
 import { queryEvidence } from "./lib/investigation-query.mjs"
+import { resolveInvestigationQuestion } from "./lib/investigation-question.mjs"
+import { runInvestigationAnalyst } from "./lib/investigation-analyst.mjs"
+import { readReportFile, validateInvestigationReport, renderInvestigationReport } from "./lib/investigation-report.mjs"
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
@@ -73,6 +76,14 @@ async function main() {
       "line-end": { type: "string" },
       "byte-start": { type: "string" },
       "byte-end": { type: "string" },
+      question: { type: "string" },
+      "ad-hoc": { type: "string" },
+      "report-guidance": { type: "string" },
+      "analyst-model": { type: "string" },
+      "cache-root": { type: "string" },
+      context: { type: "string" },
+      file: { type: "string" },
+      output: { type: "string" },
       once: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
       resume: { type: "boolean", default: false },
@@ -85,6 +96,11 @@ async function main() {
   const command = positionals[0] ?? "help"
   if (values.help) {
     printUsage()
+    return
+  }
+  if (command === "lane" && positionals[1] === "investigate" && positionals[2]) {
+    if (positionals[2] !== "validate-report") throw new Error("Unknown investigation command.")
+    await validateAnalystFile(values)
     return
   }
   if (command === "lane" && positionals[1] === "evidence" && positionals[2]) {
@@ -107,6 +123,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
     else if (command === "lane" && positionals[1] === "resume") await resume({ values, state })
     else if (command === "lane" && positionals[1] === "evidence") await evidence({ values, state })
+    else if (command === "lane" && positionals[1] === "investigate") await investigateLane({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
@@ -277,10 +294,44 @@ async function evidenceQuery({ method, values }) {
     if (value !== undefined) filters[key] = value
   }
   const answer = await queryEvidence({ snapshotId: values["snapshot-id"], method, filters,
+    cache: new EvidenceSnapshots({ root: values["cache-root"] }),
     cursor: values.cursor, readerLease: values["reader-lease"], eventId: values["event-id"],
     field: values.field, fieldPath: values["field-path"], fieldKey: values["field-key"],
     lineStart: number("line-start"), lineEnd: number("line-end"), byteStart: number("byte-start"), byteEnd: number("byte-end") })
   console.log(JSON.stringify(answer))
+}
+
+async function validateAnalystFile(values) {
+  if (!values.file || !values.context) throw new Error("validate-report requires --file and --context from the analyst dispatch.")
+  const context = await readReportFile(values.context)
+  if (!context.snapshotId || !context.worktreePath || !context.question || !context.readerLease || !context.cacheRoot) throw new Error("Invalid report validation context.")
+  await validateInvestigationReport(await readReportFile(values.file), context, { cache: new EvidenceSnapshots({ root: context.cacheRoot }) })
+  console.log(JSON.stringify({ valid: true, snapshotId: context.snapshotId }))
+}
+
+async function investigateLane({ values, state }) {
+  if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
+  if (!values.worktree && !values.issue) throw new Error("lane investigate requires --worktree <path> or --issue <number>")
+  const question = await resolveInvestigationQuestion({ question: values.question, adHoc: values["ad-hoc"], guidance: values["report-guidance"] })
+  const worktreePath = values.worktree ? await realpath(values.worktree) : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
+  const cache = new EvidenceSnapshots()
+  const snapshot = await prepareLaneEvidence({ state, aoe: new AoeClient(), worktreePath, cache })
+  console.error(`Evidence snapshot ${snapshot.reused ? "reused" : "created"}: ${snapshot.snapshotId}; collected ${snapshot.createdAt}; cutoff ${snapshot.cutoff ?? snapshot.asOf}; ${snapshot.sizeBytes} bytes.`)
+  for (const gap of snapshot.gaps) console.error(`Evidence gap: ${gap}`)
+  const lane = state.lane(worktreePath)
+  if (!lane) throw new Error(`No active lane for ${worktreePath}.`)
+  await assertQuiet(new AoeClient(), lane)
+  const model = values["analyst-model"] ?? (lane.authorHarness === "codex" ? lane.authorModel : lane.reviewerHarness === "codex" ? lane.reviewerModel : undefined)
+  const controller = new AbortController()
+  const interrupt = () => controller.abort()
+  process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt)
+  try {
+    const answer = await runInvestigationAnalyst({ snapshot, worktreePath, question, model, cache, signal: controller.signal })
+    const report = renderInvestigationReport({ answer, snapshot, worktreePath })
+    if (values.output) await writeFile(values.output, report, { flag: "wx", mode: 0o600 })
+    console.log(report.trimEnd())
+    if (values.output) console.error(`Markdown report written to ${values.output}`)
+  } finally { process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt) }
 }
 
 async function recover({ values, state }) {
@@ -396,6 +447,8 @@ function printUsage() {
   tars lane indexes
   tars lane remove-index --snapshot-id <id>
   tars lane prune-indexes
+  tars lane investigate (--worktree <path> | --issue <number>) [--question navigation-efficiency | --ad-hoc <text>] [--report-guidance <text>] [--analyst-model <model>] [--output <markdown-path>]
+  tars lane investigate validate-report --file <answer.json> --context <assigned-context.json>
   tars status`)
 }
 

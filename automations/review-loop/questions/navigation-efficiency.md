@@ -1,0 +1,11 @@
+# Repository navigation efficiency
+
+Diagnose repository navigation across both roles over the lane through the snapshot cutoff. Begin with a lane-wide narrative; give block-level detail where notable symptoms are supported. Explain what was observed before offering clearly labeled repository-friction hypotheses. Specific repository changes are optional, not the goal.
+
+Look for repeated reads/searches, similar queries, breadth of files explored, and unusually large one-time reads or outputs when task context suggests possible waste. Derive comparisons yourself from events; TARS normalizes individual records and does not decide what is excessive. Only count a file as explored for content when part or all of its contents were actually shown. Distinguish full reads from partial reads; a partial read is not automatically a reread of the whole file.
+
+Compare repetition within each role. Compaction resets repository knowledge: subsequent reads and searches can be appropriate. Use contextSegmentId and precedingCompactionEventId; unknown continuity cannot prove uninterrupted memory. Separate sources/bundles do not prove separate context resets. Reviewer reads of changed files at new commits are expected; unchanged content read earlier in the same context may warrant scrutiny. Author rereads after edits may confirm changes, but can still be discussed in context. Native call/result pairs represent one execution, not two.
+
+Retrieve task messages, handoff context, command inputs and visible outputs as needed to understand intent. Unknown commands may still be understandable from their raw evidence. Size is a visible lower bound when completeness is unknown. Elapsed time and native token usage are supporting context, never proof of waste by themselves.
+
+A plausible shorter navigation route must be grounded in the task and repository. Before asserting a file or guide was available at a block's commit, verify its existence in that history; do not reconstruct every event. Cite repository history when making that claim. Explain material uncertainty and contrary evidence. If limited inspection supports no problem, say no supported problem was found and describe the limit rather than declaring navigation efficient.

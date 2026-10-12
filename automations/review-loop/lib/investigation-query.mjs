@@ -15,6 +15,14 @@ export async function queryEvidence({ snapshotId, method, filters = {}, eventId,
   lineStart, lineEnd, byteStart, byteEnd, cursor, readerLease, cache = new EvidenceSnapshots(), counter }) {
   if (!METHODS.has(method)) throw new Error(`Unknown evidence query ${method}.`)
   if (!snapshotId) throw new Error("Evidence queries require --snapshot-id.")
+  return withEvidenceReader({ snapshotId, readerLease, cache }, async (reader, snapshot) => {
+    const query = new EvidenceQuery(reader.database, snapshot, counter ?? await defaultTokenCounter())
+    return query.run(method, { filters, eventId, field, fieldPath, fieldKey, lineStart, lineEnd, byteStart, byteEnd, cursor })
+  })
+}
+
+/** Share lease checks with final report validation; borrowed queries never mutate the cache. */
+export async function withEvidenceReader({ snapshotId, readerLease, cache = new EvidenceSnapshots() }, action) {
   let lease
   if (readerLease) {
     if (!/^[a-f0-9-]{36}$/.test(readerLease)) throw new Error("Invalid reader lease.")
@@ -28,8 +36,7 @@ export async function queryEvidence({ snapshotId, method, filters = {}, eventId,
   let reader
   try {
     reader = openEvidenceSnapshot(lease.snapshot.directory)
-    const query = new EvidenceQuery(reader.database, lease.snapshot, counter ?? await defaultTokenCounter())
-    return query.run(method, { filters, eventId, field, fieldPath, fieldKey, lineStart, lineEnd, byteStart, byteEnd, cursor })
+    return await action(reader, lease.snapshot)
   } finally { reader?.close(); await lease.release() }
 }
 

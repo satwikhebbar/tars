@@ -6,7 +6,7 @@ This sequence implements the decisions in [the progressive evidence proposal](pr
 2. **SQLite storage foundation — completed and pushed.** Add immutable snapshots, source/block/event/content tables, content deduplication, a versioned native normalization inventory, lossless chosen-artifact reconstruction, atomic publication, seven-day expiry, forced refresh, listing and deletion APIs. This is a library iteration; the existing CLI remains the smoke surface for lane behavior. New storage tests use both harness fixtures and isolated temporary cache directories. No analyst or operator CLI reads this database yet.
 3. **Connect collection and cache lifecycle — completed and pushed.** Connect both native-source collectors and block attribution to the storage foundation. Replace `lane evidence --index` with ordinary snapshot preparation and `--force`; expose indexes/remove-index/prune-indexes. Retain source availability and upstream gaps, incorporate dispatch markers without prompt duplication, and handle large exports. Serialize cache mutation, implement analyst lease acquisition/release and crash recovery before enabling automatic deletion around readers. Live smoke: create issue 75 snapshot, reconstruct/compare artifacts, reuse without exports, force a second snapshot, verify sizes, and clean up only the selected cache.
 4. **Progressive read-only CLI — completed; automated and live smoke checks passed.** Implement snapshot-bound overview, event filters, content ranges and extra-field queries, opaque filter-bound cursors, bounded serialized response sizes and local token estimates. Add context-segment/compaction references and opening native-message IDs to blocks. All bodies and oversized metadata remain accessible through references. Test pagination, exact path/query semantics, Unicode, unusual native fields, and long fixtures. Live smoke: page both roles of issue 75, retrieve selected bodies and confirm limits and stable ordering.
-5. **Questions, report and analyst.** Implement common dispatch guidance, navigation built-in and ad hoc questions, structured answer-file protocol, hybrid inline citations, self-validation CLI and deterministic Markdown rendering. Use a separate Codex analyst with read-only repository/cache access and a writable private answer directory. Reuse preparation implicitly; require both role sources; remove the whole-projection budget gate. Validate final answers and permit one correction in the same session. Smoke a real investigation, inspect its evidence and report, confirm main role sessions are untouched, and test cleanup.
+5. **Questions, report and analyst — implemented; automated checks passed, awaiting review and live smoke.** Implement common dispatch guidance, navigation built-in and ad hoc questions, structured answer-file protocol, hybrid inline citations, self-validation CLI and deterministic Markdown rendering. Use a separate Codex analyst with read-only repository/cache access and a writable private answer directory. Reuse preparation implicitly; require both role sources; remove the whole-projection budget gate. Validate final answers and permit one correction in the same session. Smoke a real investigation, inspect its evidence and report, confirm main role sessions are untouched, and test cleanup.
 
 ## Storage foundation contract
 
@@ -151,3 +151,50 @@ prompts were sent.
 The first line-range assertion incorrectly expected a large selected range in
 one page. Following its continuation cursors fixed the smoke harness; no
 product changes were required.
+
+## Iteration 5 implementation notes
+
+`lane investigate` now prepares/reuses a snapshot and launches one constrained
+Codex analyst, including for OpenCode-authored lanes. It rechecks quiet AoE roles
+before launch even when preparation reuses cached evidence. Both sources must be
+available or partial; absent role sources stop launch, while smaller gaps remain
+visible. No whole-projection budget gate or selected-block mode remains.
+
+The built-in registry is instructions-only, with versioned navigation guidance in
+`questions/navigation-efficiency.md`. Ad hoc question text and optional report
+guidance reuse the common prompt, evidence tools and report validator. The opening
+prompt contains one bounded overview page, paging/filter syntax, scope and evidence
+rules, the structured answer shape, and an assigned file/self-validation command.
+
+The launcher owns a lifetime snapshot lease. Evidence and report-validation CLI
+commands borrow it read-only and bypass the lane registry. The private run directory
+is the only model-writable root: explicit sandbox settings disable other roots,
+shared temporary writes, tool network access and approval escalation on launch and
+resume. Codex user config/rules are ignored. The lane's Codex model (or an explicit
+`--analyst-model`) is used, without forwarding an OpenCode provider model.
+
+The analyst authors the structured JSON and Markdown prose. Validation checks
+required fields, snapshot/question identity, scope, inline citation registry usage,
+block/event existence and local Git commit/path existence. It does not assess
+substance, citation line meaning, or the analyst's reading history. A partial
+report is supported. The file is bounded to 1 MiB and must be a regular file, not
+a symlink. TARS reads its assigned path, not a path from the completion message.
+One correction resumes the captured JSONL thread ID with the same explicit sandbox
+and model. Validated Markdown preserves inline citation placement and includes the
+snapshot cutoff. Export uses exclusive creation.
+
+Process stdout streams to a private temporary JSONL file. Normal return, process or
+validation error, timeout and handled interruption remove run files and release the
+lease. SIGKILL leaves a reclaimable dead-owner lease and may leave an OS temporary
+directory; this is not a retained TARS report store. Live smoke remains a separate
+pre-push check: run lane 75 investigation, inspect its grounded report, self-validator
+and progressive reads, confirm role sessions/native evidence unchanged, and check
+run-directory/lease cleanup. Do not push until that smoke is approved and complete.
+
+Automated verification: 22 new tests cover question resolution, schema/inline
+citations, repository references, self-validation CLI isolation, actual child-process
+stdin/file output, interruptions/timeouts, correction/resume settings, both-role
+coverage, partial reports, export protection and the CLI flow with a stub harness.
+An isolated checkout of the exact staged files passed all 247 tests;
+the old uncommitted projection/analyst drafts were replaced by this implementation.
+Earlier unrelated index/spike edits remain outside the iteration commit.
