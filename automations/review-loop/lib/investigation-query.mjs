@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { hostname } from "node:os"
 import { EvidenceSnapshots, openEvidenceSnapshot } from "./investigation-snapshot.mjs"
-import { CONTENT_LIMITS, PAGE_LIMITS, defaultTokenCounter, fitsResponse } from "./investigation-response.mjs"
+import { CONTENT_LIMITS, PAGE_LIMITS, defaultTokenCounter, fitsResponse, estimateContentTokens } from "./investigation-response.mjs"
 
 const METHODS = new Set(["overview", "list_events", "get_event_content", "get_event_details"])
 const FILTERS = new Set(["blockId", "role", "eventType", "toolName", "action", "path", "pathUnder", "query", "minVisibleOutputBytes", "from", "to", "sourceId", "messageId"])
@@ -86,7 +86,8 @@ class EvidenceQuery {
   children(event, parent) { return this.db.prepare("SELECT * FROM event_fields WHERE event_id=? AND parent_id=? ORDER BY ordinal").iterate(event, parent) }
   descriptor(row) {
     return { eventId: row.event_id, fieldId: row.field_id, kind: row.kind,
-      ...(row.text_bytes !== null ? { bytes: row.text_bytes, lines: row.line_count } : {}) }
+      ...(row.text_bytes !== null ? { bytes: row.text_bytes, lines: row.line_count,
+        contentTokenEstimate: { estimatedTokens: row.estimated_tokens, method: row.token_estimate_method, scope: "stored-text" } } : {}) }
   }
   small(row, depth = 0) {
     if (!row) return undefined
@@ -231,6 +232,7 @@ class EvidenceQuery {
       const key = JSON.parse(row.key_json)
       return { key: preview(key), ...(String(key).length > 160 ? { keyTruncated: true, keyContent: {
         ...this.descriptor(row), fieldKey: true, bytes: Buffer.byteLength(key), lines: key.split("\n").length,
+        contentTokenEstimate: { ...estimateContentTokens(key, this.counter), scope: "field-key" },
       } } : {}),
         ...this.descriptor(row), value: ["object", "array"].includes(row.kind) ? this.descriptor(row) : this.small(row) }
     }, { eventId, fieldId: root.field_id, kind: root.kind }, "fields")
@@ -280,6 +282,9 @@ class EvidenceQuery {
       const next = start + returned
       const candidate = fitsResponse(this.envelope({ eventId, fieldId: field, fieldKey,
         text, returnedBytes: returned, totalBytes, totalLines, byteStart: start, byteEnd: next,
+        contentTokenEstimate: { estimatedTokens: this.counter.count(text), method: this.counter.method, scope: "returned-text" },
+        totalContentTokenEstimate: fieldKey ? { ...estimateContentTokens(JSON.parse(row.key_json), this.counter), scope: "field-key" } :
+          { estimatedTokens: row.estimated_tokens, method: row.token_estimate_method, scope: "stored-text" },
         requestedByteStart: requestedStart, requestedByteEnd: end,
         ...(hasLines ? { requestedLineStart: lineStart ?? 1, requestedLineEnd: lineEnd ?? totalLines } : {}) }, next < end, next - requestedStart), this.counter, CONTENT_LIMITS)
       if (candidate) return candidate

@@ -4,8 +4,9 @@ import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { orderEvidenceEvents, storeEventFields } from "./investigation-fields.mjs"
+import { defaultTokenCounter, estimateContentTokens } from "./investigation-response.mjs"
 
-export const SNAPSHOT_VERSION = 3
+export const SNAPSHOT_VERSION = 4
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const CHUNK_BYTES = 8192
 
@@ -79,6 +80,7 @@ export class EvidenceSnapshots {
         CREATE TABLE event_fields (event_id TEXT NOT NULL REFERENCES events(event_id), field_id TEXT NOT NULL,
           parent_id TEXT, ordinal INTEGER NOT NULL, key_json TEXT NOT NULL, kind TEXT NOT NULL,
           value_json TEXT, text_bytes INTEGER, line_count INTEGER, field_path TEXT NOT NULL,
+          estimated_tokens INTEGER, token_estimate_method TEXT,
           PRIMARY KEY(event_id, field_id));
         CREATE INDEX fields_parent ON event_fields(event_id, parent_id, ordinal);
         CREATE INDEX fields_path ON event_fields(event_id, field_path);
@@ -92,6 +94,15 @@ export class EvidenceSnapshots {
       db.exec("PRAGMA foreign_keys = ON; BEGIN")
       for (const block of evidence.blocks ?? []) db.prepare("INSERT INTO blocks VALUES (?, ?)").run(block.id, JSON.stringify(block))
       const store = createContentStore(db)
+      const counter = await defaultTokenCounter()
+      // Repeated native bodies share a measurement without retaining their text here.
+      const tokenCounts = new Map()
+      const count = (text) => {
+        const hash = createHash("sha256").update(text).digest("hex")
+        if (!tokenCounts.has(hash)) tokenCounts.set(hash, counter.count(text))
+        return tokenCounts.get(hash)
+      }
+      const estimate = (text) => estimateContentTokens(text, counter, count)
       for (const source of evidence.sources) {
         db.prepare("INSERT INTO sources VALUES (?, ?, ?)").run(source.id,
           JSON.stringify(source.metadata), JSON.stringify(store.pack(source.native)))
@@ -105,7 +116,7 @@ export class EvidenceSnapshots {
         db.prepare("INSERT INTO event_facts VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, timelinePosition,
           event.attributes?.name ?? null, action?.kind ?? null, action?.query ?? null,
           JSON.stringify(action?.targets ?? []), event.attributes?.visibleOutputBytes ?? null, event.pointer?.messageId ?? null)
-        storeEventFields(db, event.id, JSON.parse(JSON.stringify({ ...metadata, extra })), store.pack)
+        storeEventFields(db, event.id, JSON.parse(JSON.stringify({ ...metadata, extra })), store.pack, estimate)
       }
       db.exec("COMMIT")
       db.close(); db = null

@@ -9,7 +9,7 @@ import { EvidenceSnapshots, openEvidenceSnapshot } from "../lib/investigation-sn
 import { nativeArtifactRecords } from "../lib/investigation-records.mjs"
 import { orderEvidenceEvents } from "../lib/investigation-fields.mjs"
 import { queryEvidence } from "../lib/investigation-query.mjs"
-import { localTokenCounter, measureResponse, PAGE_LIMITS, CONTENT_LIMITS } from "../lib/investigation-response.mjs"
+import { localTokenCounter, estimateContentTokens, measureResponse, PAGE_LIMITS, CONTENT_LIMITS } from "../lib/investigation-response.mjs"
 
 const rough = { method: "test:characters", count: (text) => Math.ceil([...text].length / 4) }
 const source = { id: "s", metadata: { role: "author", harness: "opencode" }, native: {} }
@@ -39,6 +39,77 @@ async function all(query, method = "list_events", args = {}, key = "events") {
   do { const page = await query(method, { ...args, cursor }); bounded(page); result.push(...page[key]); cursor = page.nextCursor } while (cursor)
   return result
 }
+
+test("text descriptors expose cached full-body token estimates and content pages measure only returned text", async (t) => {
+  const text = "漢字🙂 café\nsecond line\n".repeat(700)
+  const { query, snapshot } = await setup(t, [makeEvent(0, { extra: { state: { output: text } } })])
+  const local = await localTokenCounter()
+  const expected = { ...estimateContentTokens(text, local), scope: "stored-text" }
+  const listed = await query("list_events"); bounded(listed)
+  const field = listed.events[0].contentFields[0]
+  assert.deepEqual(field.contentTokenEstimate, expected)
+  const details = await query("get_event_details", { eventId: "E0", field: field.fieldId }); bounded(details)
+  assert.deepEqual(details.fields[0].contentTokenEstimate, expected)
+  const content = await query("get_event_content", { eventId: "E0", field: field.fieldId, lineStart: 2, lineEnd: 3 })
+  bounded(content, CONTENT_LIMITS)
+  assert.equal(content.text, "second line\n漢字🙂 café\n")
+  assert.deepEqual(content.totalContentTokenEstimate, expected)
+  assert.deepEqual(content.contentTokenEstimate, { estimatedTokens: rough.count(content.text), method: rough.method, scope: "returned-text" })
+  assert(content.estimatedTokens > content.contentTokenEstimate.estimatedTokens)
+  const paged = await query("get_event_content", { eventId: "E0", field: field.fieldId })
+  bounded(paged, CONTENT_LIMITS); assert(paged.hasMore)
+  assert.deepEqual(paged.totalContentTokenEstimate, expected)
+  assert.equal(paged.contentTokenEstimate.estimatedTokens, rough.count(paged.text))
+  // Even a different query counter cannot alter the measurement stored at indexing time.
+  const reader = openEvidenceSnapshot(snapshot.directory)
+  try {
+    const row = reader.database.prepare("SELECT estimated_tokens,token_estimate_method FROM event_fields WHERE event_id=? AND field_id=?").get("E0", field.fieldId)
+    assert.equal(row.estimated_tokens, expected.estimatedTokens); assert.equal(row.token_estimate_method, expected.method)
+  } finally { reader.close() }
+})
+
+test("text-key estimates describe the key rather than the string value, including empty text", async (t) => {
+  const key = "long-key-".repeat(30)
+  const { query } = await setup(t, [makeEvent(0, { extra: { [key]: "" } })])
+  const details = await query("get_event_details", { eventId: "E0" })
+  const field = details.fields[0]
+  assert.equal(field.contentTokenEstimate.estimatedTokens, 0)
+  assert.equal(field.keyContent.contentTokenEstimate.estimatedTokens, rough.count(key))
+  const content = await query("get_event_content", { eventId: "E0", field: field.fieldId, fieldKey: true, byteStart: 0, byteEnd: 5 })
+  assert.equal(content.text, key.slice(0, 5))
+  assert.equal(content.totalContentTokenEstimate.scope, "field-key")
+  assert.equal(content.totalContentTokenEstimate.estimatedTokens, rough.count(key))
+})
+
+test("long-body counting bounds tokenizer inputs, preserves surrogate pairs and labels chunk estimates", () => {
+  const pieces = []
+  const counter = { method: "test:local", count: (part) => {
+    assert(part.length <= 2048)
+    assert(!/^[\uDC00-\uDFFF]/.test(part)); assert(!/[\uD800-\uDBFF]$/.test(part))
+    pieces.push(part); return [...part].length
+  } }
+  const text = "a".repeat(2047) + "🙂" + "漢字".repeat(3000)
+  const result = estimateContentTokens(text, counter)
+  assert.equal(pieces.join(""), text)
+  assert.equal(result.estimatedTokens, [...text].length)
+  assert.equal(result.method, "test:local:chunked-estimate")
+  assert.deepEqual(estimateContentTokens("short", counter), { estimatedTokens: 5, method: "test:local" })
+  assert.deepEqual(estimateContentTokens("", rough), { estimatedTokens: 0, method: rough.method })
+  assert.equal(estimateContentTokens(text, rough).method, "test:characters:chunked-estimate")
+})
+
+test("chunked estimates prefer whitespace without losing text or splitting ordinary words", () => {
+  const pieces = []
+  const text = "navigation efficiency\tread files\nreview evidence ".repeat(150)
+  const result = estimateContentTokens(text, { method: "test:words", count: (part) => {
+    assert(part.length <= 2048); pieces.push(part); return 1
+  } })
+  assert.equal(pieces.join(""), text)
+  assert(pieces.slice(1).every((part) => /^\s/u.test(part)))
+  assert(pieces.slice(0, -1).every((part) => /\S$/u.test(part)))
+  assert.equal(result.estimatedTokens, pieces.length)
+  assert.equal(result.method, "test:words:chunked-estimate")
+})
 
 test("long timelines page every event once in stable native order, with bounded serialized envelopes", async (t) => {
   const events = Array.from({ length: 1000 }, (_, i) => makeEvent(i))

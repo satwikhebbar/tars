@@ -31,6 +31,11 @@ test("separate Codex analyst gets bounded overview, progressive CLI and file pro
     const context = await writeAnswer(command)
     assert.match(command.prompt, /get_event_details/); assert.match(command.prompt, /First overview page/)
     assert.match(command.prompt, /validate-report/); assert.match(command.prompt, /not authority/)
+    assert.match(command.prompt, /bullets for separate observations/)
+    assert.match(command.prompt, /no counting script is needed/)
+    assert.match(command.prompt, /totalContentTokenEstimate/)
+    assert.match(command.prompt, /assignment file.*context\.json/)
+    assert.match(command.prompt, /not conversation history or evidence content/)
     await assert.rejects(fixture.cache.remove(fixture.snapshot.snapshotId), /in use|lease/i)
     const page = await queryEvidence({ cache: fixture.cache, snapshotId: context.snapshotId, readerLease: context.readerLease, method: "list_events" })
     assert.equal(page.events[0].eventId, "E1")
@@ -118,9 +123,11 @@ test("minor source gaps do not block a partial report", async (t) => {
 })
 test("ad hoc question uses common tools and generic validation without navigation instructions", async (t) => {
   const fixture = await investigationFixture(t)
-  const question = { identity: { kind: "ad-hoc", text: "Assess workflow risk." }, instructions: "Assess workflow risk." }
+  const question = { identity: { kind: "ad-hoc", text: "Assess workflow risk." }, instructions: "Explain approvals." }
   await runInvestigationAnalyst({ ...fixture, worktreePath: fixture.root, question, runner: async (command) => {
     assert.match(command.prompt, /Assess workflow risk/); assert(!command.prompt.includes("Compare repetition within each role"))
+    assert.equal(command.prompt.split("Assess workflow risk.").length - 1, 1)
+    assert.match(command.prompt, /Additional report guidance:\nExplain approvals\./)
     await writeAnswer(command); return { sessionId: "s" }
   } })
 })
@@ -242,7 +249,7 @@ test("dispatch shell commands support spaces, apostrophes and Unicode in assigne
   const { rename } = await import("node:fs/promises")
   await rename(fixture.cache.root, join(odd, "cache's files")); fixture.cache.root = join(odd, "cache's files")
   await runInvestigationAnalyst({ ...fixture, snapshot, worktreePath: odd, runner: async (command) => {
-    const prefix = command.prompt.match(/Evidence CLI prefix[^\n]*\n([^\n]+)/)[1]
+    const prefix = command.prompt.match(/Base command:\n([^\n]+)/)[1]
     const validate = command.prompt.match(/Self-validate[^\n]*\n([^\n]+)/)[1]
     const context = await writeAnswer(command, { findings: [], summaryMarkdown: "No events.", citations: {} })
     assert.equal(context.worktreePath, odd)

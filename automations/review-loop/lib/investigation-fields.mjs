@@ -4,15 +4,16 @@ export const fieldId = (path) => createHash("sha256").update(path).digest("hex")
 export const childPath = (path, key) => `${path}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`
 
 /** Store JSON structure separately from leaves so details never eagerly expand bodies. */
-export function storeEventFields(db, eventId, value, pack) {
-  const insert = db.prepare("INSERT INTO event_fields VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+export function storeEventFields(db, eventId, value, pack, estimate) {
+  const insert = db.prepare("INSERT INTO event_fields VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
   const walk = (item, path, parent, key, ordinal) => {
     const id = fieldId(path)
     const kind = Array.isArray(item) ? "array" : item === null ? "null" : typeof item
     const compound = kind === "array" || kind === "object"
+    const tokens = typeof item === "string" ? estimate(item) : null
     insert.run(eventId, id, parent, ordinal, JSON.stringify(key), kind,
       compound ? null : JSON.stringify(pack(item)), typeof item === "string" ? Buffer.byteLength(item) : null,
-      typeof item === "string" ? item.split("\n").length : null, path)
+      typeof item === "string" ? item.split("\n").length : null, path, tokens?.estimatedTokens ?? null, tokens?.method ?? null)
     if (compound) Object.entries(item).forEach(([name, child], index) => walk(child, childPath(path, name), id, name, index))
   }
   walk(value, "", null, null, 0)

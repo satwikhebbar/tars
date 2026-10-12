@@ -135,5 +135,11 @@ export function renderInvestigationReport({ answer, snapshot, worktreePath }) {
     lines.push(cite(finding.analysisMarkdown), "")
   }
   lines.push("## Limitations", "", cite(answer.limitationsMarkdown) || "None declared by the analyst.", "", "## Conclusion", "", cite(answer.conclusionMarkdown))
+  if (Object.values(answer.citations).some((citation) => citation.kind === "event")) {
+    lines.push("", "## Using evidence citations", "",
+      "Bracketed event IDs identify evidence in this report's snapshot. While that cached snapshot exists, inspect an event with:", "",
+      "```sh", `tars lane evidence get_event_details --snapshot-id ${snapshot.snapshotId} --event-id <event-ID>`, "```", "",
+      "Use get_event_content with a returned text field ID to read its content. Citations cannot be retrieved after the snapshot expires or is removed; rebuilding creates a new snapshot.")
+  }
   return lines.join("\n").trimEnd() + "\n"
 }

@@ -12,7 +12,7 @@ export async function resolveInvestigationQuestion({ question, adHoc, guidance }
   if (adHoc !== undefined) {
     if (typeof adHoc !== "string" || !adHoc.trim()) throw new Error("Ad hoc question must not be empty.")
     if (guidance !== undefined && (typeof guidance !== "string" || !guidance.trim())) throw new Error("Report guidance must not be empty.")
-    return { identity: { kind: "ad-hoc", text: adHoc }, instructions: adHoc + (guidance ? `\n\nReport guidance:\n${guidance}` : "") }
+    return { identity: { kind: "ad-hoc", text: adHoc }, instructions: guidance ?? "" }
   }
   const id = question ?? NAVIGATION_QUESTION
   if (!Object.hasOwn(questions, id)) throw new Error(`Unsupported investigation question: ${id}`)

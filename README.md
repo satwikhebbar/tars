@@ -224,6 +224,19 @@ boundaries. Long native field names are accessible with `--field-key` and
 their field ID. OpenCode parent message events expose references to their
 text parts and a source/message filter to retrieve all parts.
 
+Text-field references in events/details include `contentTokenEstimate` for
+the full stored text, computed once during indexing. Content responses include
+`contentTokenEstimate` for the returned text and `totalContentTokenEstimate`
+for the full stored body (or field key). Each estimate names its method and
+scope. Long bodies are counted in bounded pieces, preferring whitespace boundaries,
+and labeled `chunked-estimate`;
+token boundaries can make these totals differ from counting the text in one
+pass. Upstream truncation or omissions still limit what the stored body represents.
+These content estimates are separate from serialized response estimates and
+native harness usage, and do not establish exact billed cost. Snapshot format
+4 adds cached estimates; older snapshots are not reused and are rebuilt on
+the next evidence collection.
+
 Overview/events/details responses are capped at 16 KiB and 4,000 estimated
 tokens; content responses at 8 KiB and 2,000 estimated tokens. Caps include
 the final JSON envelope, escaping and stdout newline. Page sizes follow these

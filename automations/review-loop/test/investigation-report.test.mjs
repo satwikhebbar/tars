@@ -16,6 +16,8 @@ test("structured report validates real event/block IDs and renders inline citati
   assert.match(markdown, /An observed task \[E1\]/)
   assert.match(markdown, /Observed evidence \[E1\]. \*\*Hypothesis\*\*/)
   assert(!markdown.includes("{{cite:")); assert(markdown.includes(snapshot.asOf))
+  assert(markdown.includes(`tars lane evidence get_event_details --snapshot-id ${snapshot.snapshotId} --event-id <event-ID>`))
+  assert.match(markdown, /Citations cannot be retrieved after the snapshot expires or is removed/)
   assert.equal(markdown, renderInvestigationReport({ answer, snapshot, worktreePath: context.worktreePath }))
 })
 test("zero-findings partial and ad hoc reports use the generic schema", async (t) => {
