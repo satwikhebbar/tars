@@ -85,3 +85,29 @@ test("self-validation CLI borrows the lease, opens no lane registry and returns 
     await assert.rejects(cache.remove(snapshot.snapshotId), /in use|lease/i)
   } finally { await lease.release() }
 })
+
+
+test("multiple inline citations preserve placement across every Markdown section and escape labels", async (t) => {
+  const { cache, context, snapshot } = await investigationFixture(t)
+  const path = "docs/operator's guide [漢字].md", commit = "a".repeat(40)
+  const answer = reportAnswer(context, {
+    scope: { kind: "partial", descriptionMarkdown: "Scope {{cite:repo}}." },
+    summaryMarkdown: "First {{cite:c1}} then {{cite:repo}} and again {{cite:c1}}.",
+    findings: [{ title: "Symptom {{cite:c1}}", blockIds: ["B"], analysisMarkdown: "**Evidence** {{cite:repo}}." }],
+    limitationsMarkdown: "Limit {{cite:c1}}.", conclusionMarkdown: "Conclusion {{cite:repo}}.",
+    citations: { c1: { kind: "event", eventId: "E1" }, repo: { kind: "repository", commit, path, line: 2 } },
+  })
+  let checks = 0
+  await validateInvestigationReport(answer, context, { cache, checkRepository: async (repo, sha, file) => {
+    checks++; assert.equal(repo, context.worktreePath); assert.equal(sha, commit); assert.equal(file, path)
+  } })
+  assert.equal(checks, 1)
+  const markdown = renderInvestigationReport({ answer, snapshot, worktreePath: context.worktreePath })
+  const label = `[${commit}:docs/operator's guide \\[漢字\\].md:2]`
+  assert(markdown.includes(`Scope ${label}.`))
+  assert(markdown.includes(`First [E1] then ${label} and again [E1].`))
+  assert(markdown.includes("### Symptom [E1]"))
+  assert(markdown.includes(`**Evidence** ${label}.`))
+  assert(markdown.includes("Limit [E1].")); assert(markdown.includes(`Conclusion ${label}.`))
+  assert(!markdown.includes("{{cite:"))
+})

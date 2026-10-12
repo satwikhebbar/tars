@@ -83,7 +83,7 @@ export async function runInvestigationAnalyst({ snapshot, worktreePath, question
       const output = join(directory, `analyst-${attempt}.jsonl`)
       const next = await runner({ ...analystCommand({ directory, prompt: attempt ?
         `Correct the assigned ${answerPath} in this same session. Validation failed: ${sessionId.error}\nRun ${validationCommand} before acknowledging completion. Do not change the task, snapshot or question.` : prompt,
-        model, sessionId: attempt ? sessionId.id : undefined, output }), signal })
+        model, sessionId: attempt ? sessionId.id : undefined, output }) }, signal)
       const id = next?.sessionId ?? await readSessionId(output)
       try {
         const answer = await readReportFile(answerPath)

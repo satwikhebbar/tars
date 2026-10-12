@@ -198,3 +198,19 @@ coverage, partial reports, export protection and the CLI flow with a stub harnes
 An isolated checkout of the exact staged files passed all 247 tests;
 the old uncommitted projection/analyst drafts were replaced by this implementation.
 Earlier unrelated index/spike edits remain outside the iteration commit.
+
+### Iteration 5 additional verification
+
+Added 10 tests for the subprocess file protocol (real progressive evidence and
+self-validation CLI calls), failed corrections, assigned-context tampering, snapshot
+isolation, quoted paths, inline citation placement, CLI cancellation including
+descendants, and failed/racing exports. The existing export test also asserts that
+an existing destination prevents analyst launch and retains its contents.
+
+The cancellation integration test exposed abort-signal forwarding as a command
+property instead of the process runner's second argument; this is corrected.
+Existing export destinations now fail before analyst launch; exclusive creation
+still protects against a destination appearing during analysis.
+
+All 257 automated tests pass. Live Codex permission enforcement and the actual
+lane 75 report remain the separate pre-push smoke gate.

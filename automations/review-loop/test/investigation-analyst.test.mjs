@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFile, readdir, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import test from "node:test"
 import { analystCommand, runInvestigationAnalyst, runAnalystProcess } from "../lib/investigation-analyst.mjs"
@@ -143,4 +143,114 @@ test("process runner streams prompt over stdin and JSONL to file, with failures 
   setTimeout(() => controller.abort(), 100)
   await assert.rejects(pending, /interrupted/)
   await assert.rejects(runAnalystProcess(command("setInterval(()=>{},1000)", "timeout"), undefined, { timeoutMs: 50 }), /timed out/)
+})
+
+
+test("subprocess completes progressive paging, content/details retrieval and CLI self-validation", async (t) => {
+  const fixture = await investigationFixture(t)
+  const events = Array.from({ length: 40 }, (_, i) => ({ id: `E${i}`, sourceId: "s", role: "author", type: "message",
+    position: i, time: i, blockId: "B", pointer: {}, attributes: {}, extra: { text: `task-${i}`, future: { flag: true } } }))
+  const snapshot = await fixture.cache.prepare({ laneId: "protocol", collect: async () => ({
+    sources: [{ id: "s", metadata: {}, native: {} }], events, blocks: [{ id: "B", role: "author", start: 0, end: null }],
+    coverage: fixture.snapshot.coverage, asOf: fixture.snapshot.asOf }) })
+  const cli = new URL("../cli.mjs", import.meta.url).pathname
+  const script = `
+    const assert=require("node:assert/strict"),fs=require("node:fs"),{execFileSync}=require("node:child_process");
+    const c=JSON.parse(fs.readFileSync("context.json","utf8"));
+    const query=(method,args=[])=>JSON.parse(execFileSync(process.execPath,[${JSON.stringify(cli)},"lane","evidence",method,
+      "--cache-root",c.cacheRoot,"--snapshot-id",c.snapshotId,"--reader-lease",c.readerLease,...args],{encoding:"utf8"}));
+    assert.equal(query("overview").blocks.length,1);
+    let cursor,events=[],pages=0;
+    do { const page=query("list_events",cursor?["--cursor",cursor]:[]);events.push(...page.events);cursor=page.nextCursor;pages++; } while(cursor);
+    assert(pages>1);assert.equal(events.length,40);assert.equal(new Set(events.map(e=>e.eventId)).size,40);
+    const e=events[0],field=e.contentFields[0].fieldId;
+    assert.equal(query("get_event_content",["--event-id",e.eventId,"--field",field]).text,"task-0");
+    const details=query("get_event_details",["--event-id",e.eventId,"--field-path","/extra/future"]);
+    assert.equal(details.fields.find(f=>f.key==="flag").value,true);
+    const a=${JSON.stringify(reportAnswer({ snapshotId: snapshot.snapshotId, question: fixture.question.identity }))};
+    a.citations.c1.eventId=e.eventId;fs.writeFileSync("answer.json",JSON.stringify(a));
+    const validation=JSON.parse(execFileSync(process.execPath,[${JSON.stringify(cli)},"lane","investigate","validate-report",
+      "--file","answer.json","--context","context.json"],{encoding:"utf8"}));assert.equal(validation.valid,true);
+    console.log(JSON.stringify({type:"thread.started",thread_id:"protocol-session"}));
+  `
+  const answer = await runInvestigationAnalyst({ ...fixture, snapshot, worktreePath: fixture.root, runner: async (command, signal) => {
+    await runAnalystProcess({ ...command, command: process.execPath, args: ["-e", script] }, signal)
+  } })
+  assert.equal(answer.citations.c1.eventId, "E0")
+  await fixture.cache.remove(snapshot.snapshotId)
+})
+
+test("failed, timed-out and missing-file corrections stop without a third attempt and clean up", async (t) => {
+  const fixture = await investigationFixture(t)
+  for (const failure of ["crash", "timeout", "missing"]) {
+    let calls = 0, directory
+    await assert.rejects(runInvestigationAnalyst({ ...fixture, worktreePath: fixture.root, runner: async (command) => {
+      directory = command.cwd; calls++
+      if (calls === 1) { await writeFile(join(directory, "answer.json"), "{}"); return { sessionId: "original" } }
+      assert.equal(command.args[2], "original")
+      if (failure === "crash") throw new Error("Correction crashed")
+      if (failure === "timeout") return runAnalystProcess({ ...command, command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] }, undefined, { timeoutMs: 50 })
+      await rm(join(directory, "answer.json")); return { sessionId: "original" }
+    } }), failure === "crash" ? /Correction crashed/ : failure === "timeout" ? /timed out/ : /after correction.*ENOENT/)
+    assert.equal(calls, 2); await assert.rejects(stat(directory), /ENOENT/)
+    assert.deepEqual(await readdir(join(fixture.snapshot.directory, "leases")), [])
+  }
+})
+
+test("changing context.json cannot change the snapshot or question used by final validation", async (t) => {
+  const fixture = await investigationFixture(t)
+  for (const mutation of [{ snapshotId: "substituted" }, { question: { kind: "ad-hoc", text: "Different task" } }]) {
+    let calls = 0
+    await assert.rejects(runInvestigationAnalyst({ ...fixture, worktreePath: fixture.root, runner: async (command) => {
+      calls++
+      const path = join(command.cwd, "context.json"), context = JSON.parse(await readFile(path, "utf8"))
+      Object.assign(context, mutation)
+      // The analyst owns its writable directory and could replace even a mode-400 file.
+      await rm(path); await writeFile(path, JSON.stringify(context))
+      await writeFile(join(command.cwd, "answer.json"), JSON.stringify(reportAnswer(context)))
+      return { sessionId: "same" }
+    } }), /after correction.*(does not match|Unknown question field)/)
+    assert.equal(calls, 2)
+    assert.deepEqual(await readdir(join(fixture.snapshot.directory, "leases")), [])
+  }
+})
+
+test("force publishing newer evidence during analysis does not change its leased snapshot", async (t) => {
+  const fixture = await investigationFixture(t)
+  let fresh
+  const answer = await runInvestigationAnalyst({ ...fixture, worktreePath: fixture.root, runner: async (command) => {
+    fresh = await fixture.cache.prepare({ laneId: fixture.snapshot.laneId, force: true, collect: async () => ({
+      sources: [], events: [], blocks: [], coverage: fixture.snapshot.coverage, asOf: "2026-10-12T01:00:00Z" }) })
+    const context = await writeAnswer(command)
+    const rows = await queryEvidence({ cache: fixture.cache, snapshotId: context.snapshotId, readerLease: context.readerLease, method: "list_events" })
+    assert.equal(rows.events[0].eventId, "E1")
+    assert.equal((await fixture.cache.prepare({ laneId: fixture.snapshot.laneId })).snapshotId, fresh.snapshotId)
+    await assert.rejects(fixture.cache.remove(fixture.snapshot.snapshotId), /in use/)
+    return { sessionId: "original" }
+  } })
+  assert.equal(answer.snapshotId, fixture.snapshot.snapshotId)
+  assert.notEqual(answer.snapshotId, fresh.snapshotId)
+  await fixture.cache.remove(fixture.snapshot.snapshotId); await fixture.cache.remove(fresh.snapshotId)
+})
+
+test("dispatch shell commands support spaces, apostrophes and Unicode in assigned paths", async (t) => {
+  const fixture = await investigationFixture(t)
+  const odd = join(fixture.root, "operator's repo 漢字")
+  await mkdir(odd)
+  const snapshot = await fixture.cache.prepare({ laneId: "odd", collect: async () => ({ sources: [], events: [], blocks: [], coverage: fixture.snapshot.coverage, asOf: fixture.snapshot.asOf }) })
+  // Move the entire cache so both generated command prefixes must quote its path.
+  const { rename } = await import("node:fs/promises")
+  await rename(fixture.cache.root, join(odd, "cache's files")); fixture.cache.root = join(odd, "cache's files")
+  await runInvestigationAnalyst({ ...fixture, snapshot, worktreePath: odd, runner: async (command) => {
+    const prefix = command.prompt.match(/Evidence CLI prefix[^\n]*\n([^\n]+)/)[1]
+    const validate = command.prompt.match(/Self-validate[^\n]*\n([^\n]+)/)[1]
+    const context = await writeAnswer(command, { findings: [], summaryMarkdown: "No events.", citations: {} })
+    assert.equal(context.worktreePath, odd)
+    const script = `const {execSync}=require("node:child_process");
+      const overview=JSON.parse(execSync(${JSON.stringify(prefix + " overview")},{encoding:"utf8"}));
+      if(overview.snapshotId!==${JSON.stringify(snapshot.snapshotId)})throw Error("Wrong snapshot");
+      const result=JSON.parse(execSync(${JSON.stringify(validate)},{encoding:"utf8"}));if(!result.valid)throw Error("Invalid");`
+    await runAnalystProcess({ ...command, command: process.execPath, args: ["-e", script] })
+    return { sessionId: "quoted" }
+  } })
 })

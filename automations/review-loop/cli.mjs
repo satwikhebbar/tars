@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process"
-import { realpath, writeFile } from "node:fs/promises"
+import { lstat, realpath, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -313,6 +313,12 @@ async function investigateLane({ values, state }) {
   if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
   if (!values.worktree && !values.issue) throw new Error("lane investigate requires --worktree <path> or --issue <number>")
   const question = await resolveInvestigationQuestion({ question: values.question, adHoc: values["ad-hoc"], guidance: values["report-guidance"] })
+  if (values.output) {
+    try {
+      await lstat(values.output)
+      throw new Error(`EEXIST: report destination already exists: ${values.output}`)
+    } catch (error) { if (error.code !== "ENOENT") throw error }
+  }
   const worktreePath = values.worktree ? await realpath(values.worktree) : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
   const cache = new EvidenceSnapshots()
   const snapshot = await prepareLaneEvidence({ state, aoe: new AoeClient(), worktreePath, cache })
