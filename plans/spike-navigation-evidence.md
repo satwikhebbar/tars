@@ -23,4 +23,4 @@ Can TARS give an operator a defensible account of repeated reads/searches and ex
 - A proposed report schema that separates observations, analyst hypotheses, supporting and contradicting evidence, unknowns, and optional repository changes.
 - Explicit cases where TARS should report a symptom but decline to judge a read as avoidable, including missing compaction or read-extent evidence.
 
-After reviewing this record, complete the [post-spike design activities](plan-active-lane-investigation.md#post-spike-plan-completion), including the high-level transient evidence-index design, before finalizing the implementation plan. The spike must not create a persistent TARS evidence store.
+The post-spike design and implementation are recorded in the [primary implementation plan](plan-progressive-investigation-implementation.md). That plan supersedes the original transient-index design with a disposable SQLite cache. This spike document retains the original experimental scope for historical context.

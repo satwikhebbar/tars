@@ -2,7 +2,7 @@
 
 Status: all five implementation iterations are completed and pushed. Updated 2026-10-14 for [issue #18](https://github.com/satwikhebbar/tars/issues/18).
 
-This is the primary implementation record for active-lane investigations. It supersedes [the earlier active-lane plan](plan-active-lane-investigation.md), including its transient projection and token-budget gate. Each iteration was independently tested and committed, followed by operator review and a local smoke check before pushing. Iteration-specific notes below retain the conditions and limitations at the time of each check; the current contract is summarized here.
+This is the primary implementation record for active-lane investigations. It supersedes the earlier active-lane plan (retained in Git history), including its transient projection and token-budget gate. Each iteration was independently tested and committed, followed by operator review and a local smoke check before pushing. Iteration-specific notes below retain the conditions and limitations at the time of each check; the current contract is summarized here.
 
 ## Current design and responsibility boundary
 
