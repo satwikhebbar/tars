@@ -38,5 +38,12 @@ TARS treats `.agent-handoff/` as the durable event log:
    this explicit marker from an approved lane, wakes Codex, and returns to the
    normal code-review loop. A renewed approval updates the existing PR; it
    never creates a second one.
+   For PR review feedback, the author first classifies each unresolved GitHub
+   thread as a code change or response only. The author replies to response-only
+   threads, then commits accepted code changes and submits them through the
+   reviewer loop. Threads addressed by code changes are answered after reviewer
+   approval and the approved commit is pushed; the author verifies those replies
+   are visible. Reviewer verdicts do not replace replies to the original PR
+   threads.
 
 Queue state, AoE session IDs, and handoff contents stay outside TARS.

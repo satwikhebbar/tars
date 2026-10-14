@@ -37,7 +37,7 @@ test("captured handoff prompt and journal share a unique native dispatch ID", as
   fixture.state.close()
 })
 
-test("feedback prompts require thread-by-thread GitHub replies", async () => {
+test("feedback prompts preserve GitHub replies until the reviewer approves code changes", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(
     fixture.worktree,
@@ -46,9 +46,9 @@ test("feedback prompts require thread-by-thread GitHub replies", async () => {
   )
   const result = await fixture.coordinator.processAll()
   assert.equal(result[0].action, "sent:opencode")
-  assert.match(fixture.aoe.sent[0].message, /every unresolved GitHub review comment/i)
-  assert.match(fixture.aoe.sent[0].message, /original GitHub thread/i)
-  assert.match(fixture.aoe.sent[0].message, /change or disposition and commit/i)
+  assert.match(fixture.aoe.sent[0].message, /reviewer handoff/i)
+  assert.match(fixture.aoe.sent[0].message, /Do not reply to original PR comments/i)
+  assert.match(fixture.aoe.sent[0].message, /authorize the push after approval/i)
   fixture.state.close()
 })
 
@@ -354,6 +354,8 @@ test("an explicitly reopened approved lane re-reviews PR feedback and updates it
   assert.equal(fixture.state.lane(fixture.worktree).state, "approved")
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /^\/tars-build /)
   assert.match(fixture.aoe.sent.at(-1).message, /existing pull request/i)
+  assert.match(fixture.aoe.sent.at(-1).message, /reply in the original GitHub threads/i)
+  assert.match(fixture.aoe.sent.at(-1).message, /verify each reply is visible/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   assert.match(fixture.aoe.sent.at(-1).message, /later asks you to address new feedback/i)
   assert.match(fixture.aoe.sent.at(-1).message, /address-pr-feedback.*reopen: true/i)
