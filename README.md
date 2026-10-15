@@ -54,6 +54,16 @@ cd tars
 node setup.mjs
 ```
 
+Install [Lefthook](https://github.com/evilmartians/lefthook) and enable the
+repository's Git hooks before making commits:
+
+```bash
+lefthook install
+```
+
+The pre-commit hook runs the full review-loop test suite. If it fails, the
+commit is stopped.
+
 To install skills selectively, use the skill installer directly:
 
 ```bash
