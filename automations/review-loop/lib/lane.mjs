@@ -1,4 +1,5 @@
 import { access, readFile, rm, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -432,10 +433,10 @@ async function assertStoppedDeadSessions(aoe, sessionIds) {
   }
 }
 
-export function issueOpeningPrompt(issue) {
-  return `You are the author for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nThis lane is direct-build: begin implementation now. Its next durable artifact is an implementation-response handoff; do not ask the user to choose a planning workflow or create a plan artifact. Use the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response with created_by: author.`
+export function issueOpeningPrompt(issue, workflowId = randomUUID()) {
+  return `You are the author for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nThis lane is direct-build: begin implementation now. Its next durable artifact is an implementation-response handoff; do not ask the user to choose a planning workflow or create a plan artifact. Use workflow_id: ${workflowId} and round: 1 in your first handoff; preserve the workflow_id and increment round in later handoffs. Do not include iteration for this direct-build lane. Use the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response with created_by: author.`
 }
 
-export function planOpeningPrompt(issue) {
-  return `You are the author planning GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse the issue-kickoff skill to initialize this already-created AoE worktree. Remain in Plan mode: inspect and design only; do not edit implementation files. Write the requested plan artifact under plans/, commit that plan artifact, then follow handoff-review to publish a plan-review handoff with created_by: author. Do not begin implementation until TARS reports that the reviewer approved the plan.`
+export function planOpeningPrompt(issue, workflowId = randomUUID()) {
+  return `You are the author planning GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nUse workflow_id: ${workflowId} and round: 1 in your initial plan-review handoff; preserve the workflow_id and increment round in later handoffs. No iteration is assigned for the initial plan-review handoff, so omit iteration. Use the issue-kickoff skill to initialize this already-created AoE worktree. Remain in Plan mode: inspect and design only; do not edit implementation files. Write the requested plan artifact under plans/, commit that plan artifact, then follow handoff-review to publish a plan-review handoff with created_by: author. Do not begin implementation until TARS reports that the reviewer approved the plan.`
 }

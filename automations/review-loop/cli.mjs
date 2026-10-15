@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { lstat, realpath, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -204,6 +205,12 @@ async function launch({ values, state }) {
     ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
     : preflight
   const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
+  const workflowId = randomUUID()
+  const openingPrompt = values.prompt
+    ? `${values.prompt}\n\nTARS workflow metadata for the first handoff: workflow_id ${workflowId}, round 1.`
+    : planning === "required"
+      ? planOpeningPrompt(issue, workflowId)
+      : issueOpeningPrompt(issue, workflowId)
   const lane = await startLane({
     aoe: laneAoe(new AoeClient()),
     state,
@@ -221,7 +228,7 @@ async function launch({ values, state }) {
       await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
       await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
     },
-    openingPrompt: values.prompt ?? (planning === "required" ? planOpeningPrompt(issue) : issueOpeningPrompt(issue)),
+    openingPrompt,
   })
   console.log(`started: ${lane.worktreePath}\t${lane.authorSessionId}\t${lane.reviewerSessionId}\t${names.branch}`)
 }
