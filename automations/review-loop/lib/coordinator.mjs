@@ -409,7 +409,11 @@ function promptFor(lane, event) {
     }
     return `Review-loop: read ${path}, revise the plan to address the requested changes, validate the revised plan, then publish one plan-review handoff with workflow_id ${event.handoff.metadata.workflow_id} and round ${event.round + 1}. For an OpenCode TARS planning author, TARS explicitly permits writes to plans/ and .agent-handoff/ in this session: make those revisions now; do not ask the user to approve or exit planning. Do not begin implementation until the plan review is approved.`
   }
-  return `Review-loop: read reviewer handoff ${path} and address its requested changes for iteration ${event.iteration}. Validate and commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. Preserve the address-pr-feedback thread checklist. Do not reply to original PR comments addressed by these code changes or push yet; TARS will send the commit through reviewer review and authorize the push after approval. Do not request a manual handoff.`
+  const existingPrFeedback = event.reopensLane || lane.phase === "post_pr_feedback"
+  const feedbackInstructions = existingPrFeedback
+    ? "Preserve the address-pr-feedback thread checklist. Keep reopen: true in the implementation-response because this lane is addressing feedback on an existing approved pull request."
+    : "This is a scheduled pre-PR iteration. Do not include reopen: true or an address-pr-feedback thread checklist in the implementation-response; no pull request exists yet."
+  return `Review-loop: read reviewer handoff ${path} and address its requested changes for iteration ${event.iteration}. Validate and commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. ${feedbackInstructions} Do not reply to original PR comments addressed by these code changes or push yet; TARS will send the commit through reviewer review and authorize the push after approval. Do not request a manual handoff.`
 }
 
 function authorPrompt(lane, event) {
