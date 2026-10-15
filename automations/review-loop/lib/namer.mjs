@@ -64,7 +64,7 @@ export function fallbackLanePreflight(issue) {
 }
 
 export function namerPrompt(issue) {
-  return `You classify and name one git lane. Do not use tools, commands, files, or network access. A plan is required for a feature, enhancement, cross-cutting/risky change, or when issue text leaves material design choices open. It is not required only for a clearly bounded, low-risk fix. Do not explain your answer. Return exactly one line and nothing else:\nTARS_LANE_PREFLIGHT={"branch":"issue/${issue.number}-short-kebab-summary","worktree_name":"issue-${issue.number}-short-kebab-summary","planning":"required"}\n\nGitHub issue #${issue.number}\nTitle: ${issue.title}\nLabels: ${(issue.labels ?? []).join(", ") || "none"}\nBody:\n${issue.body || "(none)"}`
+  return `You classify and name one git lane. Do not use tools, commands, files, or network access. A plan is required for a feature, enhancement, cross-cutting/risky change, or when issue text leaves material design choices open. It is not required only for a clearly bounded, low-risk fix. Do not explain your answer. Replace each angle-bracketed placeholder with the appropriate value. Return exactly one line and nothing else:\nTARS_LANE_PREFLIGHT={"branch":"issue/${issue.number}-<short-kebab-summary>","worktree_name":"issue-${issue.number}-<short-kebab-summary>","planning":"required"}\n\nGitHub issue #${issue.number}\nTitle: ${issue.title}\nLabels: ${(issue.labels ?? []).join(", ") || "none"}\nBody:\n${issue.body || "(none)"}`
 }
 
 function isSafeBranch(branch) {
