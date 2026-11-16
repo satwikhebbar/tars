@@ -177,9 +177,18 @@ tars lane start \
   --plan-model deepseek/deepseek-flash
 ```
 
-Use a provider/model identifier understood by OpenCode, such as
-`deepseek/deepseek-flash`. TARS also accepts `--author-model` and
-`--reviewer-model` for per-lane overrides. To configure defaults, add role
+Model identifiers use the selected harness's syntax: OpenCode expects
+`provider/model` (such as `openai/gpt-6-luna` or `deepseek/deepseek-flash`);
+Codex expects a bare model ID (such as `gpt-6-luna` or `gpt-6.1-sol`).
+TARS accepts `--author-model` and `--reviewer-model` for per-lane overrides.
+It validates resolved models before classification or lane creation, including
+checking explicit/configured Codex models against Codex's catalog when signed
+in with ChatGPT and using the OpenAI provider. This catalog may be cached;
+it does not guarantee inference availability. API-key/custom-provider Codex
+models and other harnesses receive syntax checks only. If the Codex catalog
+cannot be read, lane start stops rather than falling back to classification.
+Omitting a model lets the harness choose its default.
+To configure defaults, add role
 defaults under the selected harness in the global or repository `.tars/config.json`:
 
 ```json
