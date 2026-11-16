@@ -51,12 +51,13 @@ tars lane start \
 The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup. `--plan-model <provider/model>` is available only when OpenCode is the author.
 
 Preflight runs through the selected author harness in a temporary directory.
-OpenCode preflight uses `--pure` and its own `--classifier-model` override or
-`harnesses.opencode.defaults.classifier.model`. If omitted, OpenCode chooses
-its default in that isolated context; it does not inherit the author model,
-which may require repository configuration or external plugins. Other harnesses
-inherit the author model unless a classifier model is configured. Reviewer
-models do not participate in classification. Explicit planning overrides skip
+For every harness, the classifier uses `--classifier-model`, then
+`harnesses.<author-harness>.defaults.classifier.model`, then the resolved author
+model, then the harness default. OpenCode preflight uses `--pure` without project
+configuration or external plugins. If the inherited author model cannot resolve
+there, startup stops and asks for an available `--classifier-model` rather than
+silently selecting a different model. Reviewer models do not participate in
+classification. Explicit planning overrides skip
 classification and its model validation.
 
 Before preflight, TARS validates author/reviewer/planning overrides and configured

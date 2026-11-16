@@ -190,10 +190,8 @@ async function launch({ values, state }) {
   const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
   const configuredPlanModel = values["plan-model"] ?? (roles.author.key === "opencode" && values.planning !== "never" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
-  // OpenCode author selections may depend on project config/plugins that the
-  // isolated classifier deliberately does not load. Give it its own selection.
   const classifierModel = resolveHarnessModel(config, roles.author.key, "classifier", values["classifier-model"])
-    ?? (roles.author.key === "opencode" ? undefined : authorModel)
+    ?? authorModel
   await assertLaneModels([
     { harness: roles.author, model: authorModel, role: "author" },
     { harness: roles.reviewer, model: reviewerModel, role: "reviewer" },
@@ -486,8 +484,9 @@ Model names for --author-model and --reviewer-model use the selected harness's s
   Other harnesses: use their native model names.
   --plan-model is OpenCode-only and uses provider/model.
   --classifier-model selects the isolated classifier model using the author harness syntax.
-  OpenCode classification uses its isolated harness default unless --classifier-model
-  or harnesses.opencode.defaults.classifier.model is set; it does not inherit --author-model.
+  Classifier model precedence: --classifier-model, configured classifier model,
+  resolved author model, then the harness default. OpenCode validates this selection
+  in its isolated --pure environment; use --classifier-model if the author model is unavailable there.
   Omit a model flag to use the configured TARS role model or the harness default.`)
 }
 

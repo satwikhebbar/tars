@@ -13,7 +13,7 @@ export async function prepareHarnessPreflight(harness, { model, validateModels =
     await validateModels([{ harness: classifierHarness, model, role: "classifier" }], { cwd: directory })
   } catch (error) {
     await rm(directory, { recursive: true, force: true })
-    throw error
+    throw new Error(`${error.message} The classifier runs in an isolated temporary directory${harness.key === "opencode" ? " with --pure (no external plugins)" : ""}. Set --classifier-model to a model available there, or configure harnesses.${harness.key}.defaults.classifier.model.`, { cause: error })
   }
   return {
     run: (prompt) => executePreflight(classifierHarness, directory, prompt, model),

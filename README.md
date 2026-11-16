@@ -195,11 +195,12 @@ Catalog membership cannot guarantee remote permissions, quota or endpoint health
 Omitting a model lets the harness choose its default.
 
 Classification runs through the author harness in a temporary directory.
-OpenCode uses `--pure` and a separate `--classifier-model <provider/model>`
-selection (or `harnesses.opencode.defaults.classifier.model`); when omitted,
-it uses its isolated harness default, not the author model. This avoids passing
-a project/plugin-defined author model into a classifier that cannot load it.
-Other harnesses inherit the author model unless a classifier override is set.
+Classifier model precedence is `--classifier-model`, then the configured
+`harnesses.<author-harness>.defaults.classifier.model`, then the resolved author
+model, then the harness default. OpenCode uses `--pure` without project configuration
+or external plugins. If the inherited author model is unavailable in that
+environment, startup stops with an error asking for `--classifier-model`;
+TARS does not silently substitute another model.
 Classifier selections are validated in their actual temporary execution context
 before classification; configuration errors stop startup rather than falling
 back. `--planning always|never` skips classification and its model check.

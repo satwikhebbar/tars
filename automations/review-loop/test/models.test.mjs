@@ -120,7 +120,7 @@ test("lane start rejects an unknown bare reviewer ID before issue lookup or AoE"
   assert.match(await readFile(f.log, "utf8"), /model\/list/)
 })
 
-async function openCodeFixture(t, { output = "custom/coding-alias\nopenrouter/anthropic/claude-model:free\n", mode = "normal" } = {}) {
+async function openCodeFixture(t, { output = "custom/coding-alias\nopenrouter/anthropic/claude-model:free\n", pureOutput = output, mode = "normal" } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "tars-opencode-models-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const command = join(directory, "opencode"), log = join(directory, "calls.jsonl")
@@ -130,7 +130,7 @@ const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args,cwd:process.cwd(),config:process.env.OPENCODE_CONFIG_CONTENT}) + "\\n");
 if (${JSON.stringify(mode)} === "hang") setInterval(() => {}, 1000);
 else if (${JSON.stringify(mode)} === "error") { console.error("SECRET provider diagnostic"); process.exit(1); }
-else process.stdout.write(${JSON.stringify(output)});
+else process.stdout.write(args.includes("--pure") ? ${JSON.stringify(pureOutput)} : ${JSON.stringify(output)});
 `)
   await chmod(command, 0o700)
   return { directory, command, log, read: (options = {}) => readOpenCodeCatalog({ command, cwd: directory, ...options }) }
@@ -224,10 +224,9 @@ test("CLI validates explicit/configured classifier models in isolation, before f
   }
 })
 
-test("CLI does not pass a project author model to OpenCode classification by default", async (t) => {
+test("CLI classifier precedence is explicit override, configured classifier, resolved author, harness default", async (t) => {
   const f = await openCodeFixture(t)
   const config = join(f.directory, "config.json")
-  await writeFile(config, "{}")
   for (const [name, script] of [
     ["aoe", 'if (process.argv[2] === "agents") console.log("✓ opencode installed"); else { console.error("STOP before worktree creation"); process.exit(1); }'],
     ["gh", 'console.log(JSON.stringify({number:100,title:"Test isolated classification",body:"Implement a small fix",url:"https://example.test/issues/100",labels:[]}));'],
@@ -237,16 +236,48 @@ test("CLI does not pass a project author model to OpenCode classification by def
     await chmod(command, 0o700)
   }
   const cli = new URL("../cli.mjs", import.meta.url).pathname
+  const author = "custom/coding-alias", override = "openrouter/anthropic/claude-model:free"
+  for (const { defaults, flags, expected } of [
+    { defaults: {}, flags: ["--author-model", author], expected: author },
+    { defaults: { author: { model: author } }, flags: [], expected: author },
+    { defaults: { classifier: { model: override } }, flags: ["--author-model", author], expected: override },
+    { defaults: { classifier: { model: author } }, flags: ["--author-model", author, "--classifier-model", override], expected: override },
+    { defaults: {}, flags: [], expected: undefined },
+  ]) {
+    await writeFile(config, JSON.stringify({ harnesses: { opencode: { defaults } } }))
+    await writeFile(f.log, "")
+    await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "opencode", "--reviewer", "opencode", ...flags, "--config", config, "--state", join(f.directory, "state.sqlite")], { env: { ...process.env, PATH: f.directory } }), (error) => {
+      assert.match(error.stderr, /STOP before worktree creation/)
+      return true
+    })
+    const calls = (await readFile(f.log, "utf8")).trim().split("\n").map(JSON.parse)
+    const classifier = calls.find(({ args }) => args[0] === "run")
+    assert.ok(classifier)
+    assert.ok(classifier.args.includes("--pure"))
+    const modelFlag = classifier.args.indexOf("--model")
+    assert.equal(modelFlag === -1 ? undefined : classifier.args[modelFlag + 1], expected)
+    assert.notEqual(classifier.cwd, await realpath(f.directory))
+    if (expected) {
+      const catalog = calls.find(({ args }) => args[0] === "models" && args.includes("--pure"))
+      assert.ok(catalog)
+      assert.equal(catalog.cwd, classifier.cwd)
+    }
+  }
+})
+
+test("CLI stops early when the inherited author model is unavailable to the isolated classifier", async (t) => {
+  const f = await openCodeFixture(t, { pureOutput: "global/other-model\n" })
+  const config = join(f.directory, "config.json"), aoe = join(f.directory, "aoe")
+  await writeFile(config, "{}")
+  await writeFile(aoe, `#!${process.execPath}\nif(process.argv[2] === "agents") console.log("✓ opencode installed"); else {console.error("Unexpected AoE mutation"); process.exit(1);}\n`)
+  await chmod(aoe, 0o700)
+  const cli = new URL("../cli.mjs", import.meta.url).pathname
   await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "opencode", "--reviewer", "opencode", "--author-model", "custom/coding-alias", "--config", config, "--state", join(f.directory, "state.sqlite")], { env: { ...process.env, PATH: f.directory } }), (error) => {
-    assert.match(error.stderr, /STOP before worktree creation/)
+    assert.match(error.stderr, /classifier OpenCode model 'custom\/coding-alias' is unavailable/)
+    assert.match(error.stderr, /Set --classifier-model/)
+    assert.doesNotMatch(error.stderr, /lane preflight:|started:|spawn gh|Unexpected AoE mutation/)
     return true
   })
   const calls = (await readFile(f.log, "utf8")).trim().split("\n").map(JSON.parse)
-  assert.deepEqual(calls[0].args, ["models"])
-  assert.equal(calls[0].cwd, await realpath(f.directory))
-  const classifier = calls.find(({ args }) => args[0] === "run")
-  assert.ok(classifier)
-  assert.ok(classifier.args.includes("--pure"))
-  assert.ok(!classifier.args.includes("--model"))
-  assert.notEqual(classifier.cwd, calls[0].cwd)
+  assert.deepEqual(calls.map(({ args }) => args), [["models"], ["models", "--pure"]])
 })
