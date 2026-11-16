@@ -77,7 +77,7 @@ function mergeHarnesses(global = {}, project = {}) {
         ...(override?.defaults ?? {}),
       },
     }
-    for (const role of ["author", "reviewer", "planning"]) {
+    for (const role of ["author", "reviewer", "planning", "classifier"]) {
       if (global[key]?.defaults?.[role] || override?.defaults?.[role]) {
         merged[key].defaults[role] = {
           ...(global[key]?.defaults?.[role] ?? {}),

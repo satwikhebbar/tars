@@ -50,16 +50,35 @@ tars lane start \
 
 The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup. `--plan-model <provider/model>` is available only when OpenCode is the author.
 
-Preflight always runs through the selected author harness and uses the resolved author model, including an explicit `--author-model` override. The reviewer harness and reviewer model are not involved in preflight.
+Preflight runs through the selected author harness in a temporary directory.
+OpenCode preflight uses `--pure` and its own `--classifier-model` override or
+`harnesses.opencode.defaults.classifier.model`. If omitted, OpenCode chooses
+its default in that isolated context; it does not inherit the author model,
+which may require repository configuration or external plugins. Other harnesses
+inherit the author model unless a classifier model is configured. Reviewer
+models do not participate in classification. Explicit planning overrides skip
+classification and its model validation.
 
-Before preflight, TARS validates author/reviewer model overrides and configured
+Before preflight, TARS validates author/reviewer/planning overrides and configured
 defaults. Use bare IDs with Codex (`--author-model gpt-6-luna`), and
 `provider/model` with OpenCode (`--author-model openai/gpt-6-luna`). Explicit
 and configured Codex models are checked against its model catalog for ChatGPT
-sign-in with the OpenAI provider. Catalog failures stop startup; no classifier
-fallback or lane creation occurs. The catalog can be cached and does not
-guarantee inference availability. API-key/custom-provider models and other
-harnesses receive syntax checks only; omitted models use harness defaults.
+sign-in with the OpenAI provider. OpenCode models are checked against the
+effective `opencode models` catalog in the repository, including custom model
+aliases, plugins and enabled/disabled provider/model filters. Nested model IDs
+are supported. Classifier selections are separately checked in the same
+temporary context and with the same configuration flags used for classification.
+Catalog errors stop startup; no classifier fallback or lane creation occurs.
+TARS never automatically refreshes the catalog; use `opencode models --refresh`
+if needed. Catalog membership does not guarantee provider permissions, quota,
+or endpoint health. API-key/custom-provider Codex models and other harnesses
+receive syntax checks only; omitted selections use harness defaults.
+
+After creating an unstarted author session and provisioning its new worktree,
+TARS checks lane models again in that worktree before starting either agent
+(including capture servers). Startup failures before registration clean up
+the newly owned worktree and sessions. `lane start` refuses existing sessions;
+use `lane register`/`lane watch` to adopt existing work instead.
 
 For `planning: required`, TARS launches its setup-installed OpenCode `tars-plan` agent rather than OpenCode's read-only built-in `plan` agent. It can write only the durable `plans/` and `.agent-handoff/` artifacts, waits for Codex to approve the `plan-review`, sends `/compact`, then switches the live primary session to OpenCode's native `build` agent before sending implementation work. `setup.mjs` installs the planning agent.
 

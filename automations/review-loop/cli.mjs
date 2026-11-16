@@ -12,7 +12,7 @@ import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
-import { runHarnessPreflight } from "./lib/preflight.mjs"
+import { prepareHarnessPreflight } from "./lib/preflight.mjs"
 import { assertLaneModels } from "./lib/models.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
@@ -54,6 +54,7 @@ async function main() {
       planning: { type: "string" },
       "plan-model": { type: "string" },
       "author-model": { type: "string" },
+      "classifier-model": { type: "string" },
       "reviewer-model": { type: "string" },
       investigate: { type: "string" },
       "snapshot-id": { type: "string" },
@@ -189,21 +190,29 @@ async function launch({ values, state }) {
   const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
   const configuredPlanModel = values["plan-model"] ?? (roles.author.key === "opencode" && values.planning !== "never" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
+  // OpenCode author selections may depend on project config/plugins that the
+  // isolated classifier deliberately does not load. Give it its own selection.
+  const classifierModel = resolveHarnessModel(config, roles.author.key, "classifier", values["classifier-model"])
+    ?? (roles.author.key === "opencode" ? undefined : authorModel)
   await assertLaneModels([
     { harness: roles.author, model: authorModel, role: "author" },
     { harness: roles.reviewer, model: reviewerModel, role: "reviewer" },
     { harness: roles.author, model: configuredPlanModel, role: "planning" },
   ], { cwd: repoPath })
   await Promise.all([assertHarnessAvailable(roles.author), assertHarnessAvailable(roles.reviewer)])
-  const issue = await readIssue(repoPath, issueNumber)
-  const fallback = fallbackLanePreflight(issue)
   let planningReason = null
   const explicitPlanning = values.planning === "always" || values.planning === "never"
-  const preflight = explicitPlanning
-    ? fallback
-    : await chooseLanePreflight(issue, (prompt) => runHarnessPreflight(roles.author, prompt, { model: authorModel }), {
+  const classifier = !explicitPlanning ? await prepareHarnessPreflight(roles.author, { model: classifierModel }) : null
+  let issue, fallback, preflight
+  try {
+    issue = await readIssue(repoPath, issueNumber)
+    fallback = fallbackLanePreflight(issue)
+    preflight = explicitPlanning ? fallback : await chooseLanePreflight(issue, classifier.run, {
       onFallback: (error) => { planningReason = summarizePreflightError(error) },
     })
+  } finally {
+    await classifier?.dispose()
+  }
   const planning = resolvePlanning(values.planning, preflight.planning)
   const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
   console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
@@ -454,7 +463,7 @@ function printUsage() {
   tars watch [--once]
   tars handoff validate --path <handoff-file>
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--classifier-model <model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
   tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
@@ -476,6 +485,9 @@ Model names for --author-model and --reviewer-model use the selected harness's s
   OpenCode: provider/model, e.g. --author opencode --author-model openai/gpt-6-luna
   Other harnesses: use their native model names.
   --plan-model is OpenCode-only and uses provider/model.
+  --classifier-model selects the isolated classifier model using the author harness syntax.
+  OpenCode classification uses its isolated harness default unless --classifier-model
+  or harnesses.opencode.defaults.classifier.model is set; it does not inherit --author-model.
   Omit a model flag to use the configured TARS role model or the harness default.`)
 }
 
@@ -495,7 +507,7 @@ function laneAoe(client) {
     createPair: (worktreePath, roles) => createPair(client, worktreePath, roles),
     findOrCreateWorktreeSession: async (repoPath, branch, title, options = {}) => {
       const existing = await findWorktreeSession(client, repoPath, branch, options.tool)
-      if (existing && options.requireNew) throw new Error(`--investigate capture requires a newly launched ${options.tool} session; found existing AoE session ${existing.id} for branch ${branch}.`)
+      if (existing && options.requireNew) throw new Error(`lane start requires a new ${options.tool} session so models can be validated before launch; found existing AoE session ${existing.id} for branch ${branch}. Use lane register/watch for an existing lane.`)
       return existing ?? client.createWorktreeSession(repoPath, branch, title, options)
     },
     addSession: (worktreePath, tool, title, options) => client.addSession(worktreePath, tool, title, options),

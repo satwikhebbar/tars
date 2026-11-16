@@ -181,13 +181,33 @@ Model identifiers use the selected harness's syntax: OpenCode expects
 `provider/model` (such as `openai/gpt-6-luna` or `deepseek/deepseek-flash`);
 Codex expects a bare model ID (such as `gpt-6-luna` or `gpt-6.1-sol`).
 TARS accepts `--author-model` and `--reviewer-model` for per-lane overrides.
-It validates resolved models before classification or lane creation, including
-checking explicit/configured Codex models against Codex's catalog when signed
-in with ChatGPT and using the OpenAI provider. This catalog may be cached;
-it does not guarantee inference availability. API-key/custom-provider Codex
-models and other harnesses receive syntax checks only. If the Codex catalog
-cannot be read, lane start stops rather than falling back to classification.
+Before classification or lane creation, it checks resolved OpenCode author,
+reviewer and planning selections against `opencode models` in the repository.
+This includes configured custom providers, model aliases, plugins and model
+filters; nested IDs such as `openrouter/anthropic/claude-model` stay intact.
+The command inherits the environment and relevant harness launch options.
+TARS also checks explicit/configured Codex selections against its catalog when
+signed in with ChatGPT and using the OpenAI provider. API-key/custom-provider
+Codex models and other harnesses receive syntax checks only.
+Catalog failures stop startup. TARS does not automatically refresh catalogs;
+run `opencode models --refresh` yourself if OpenCode's catalog is stale.
+Catalog membership cannot guarantee remote permissions, quota or endpoint health.
 Omitting a model lets the harness choose its default.
+
+Classification runs through the author harness in a temporary directory.
+OpenCode uses `--pure` and a separate `--classifier-model <provider/model>`
+selection (or `harnesses.opencode.defaults.classifier.model`); when omitted,
+it uses its isolated harness default, not the author model. This avoids passing
+a project/plugin-defined author model into a classifier that cannot load it.
+Other harnesses inherit the author model unless a classifier override is set.
+Classifier selections are validated in their actual temporary execution context
+before classification; configuration errors stop startup rather than falling
+back. `--planning always|never` skips classification and its model check.
+
+Lane start creates a new, unstarted author session, provisions the worktree,
+and revalidates lane models there before either agent starts. A failed startup
+cleans up the newly created lane before registration. Existing AoE sessions
+must use `lane register` or `lane watch` rather than `lane start`.
 To configure defaults, add role
 defaults under the selected harness in the global or repository `.tars/config.json`:
 
@@ -203,6 +223,7 @@ defaults under the selected harness in the global or repository `.tars/config.js
     "opencode": {
       "defaults": {
         "author": { "model": "<author-model>" },
+        "classifier": { "model": "deepseek/deepseek-flash" },
         "planning": { "model": "deepseek/deepseek-flash" }
       }
     }

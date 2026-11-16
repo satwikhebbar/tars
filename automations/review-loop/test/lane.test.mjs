@@ -7,9 +7,11 @@ import test from "node:test"
 import { promisify } from "node:util"
 import { groupForWorktree } from "../lib/aoe.mjs"
 import { openCodeServerConfig } from "../lib/investigation-capture.mjs"
-import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "../lib/lane.mjs"
+import { assertLaneModels } from "../lib/models.mjs"
+import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane as startLaneImpl, worktreeForIssue } from "../lib/lane.mjs"
 
 const execFileAsync = promisify(execFile)
+const startLane = (options) => startLaneImpl({ validateModels: async () => {}, ...options })
 
 test("groups both sessions before watching an existing pair", async () => {
   const aoe = new FakeAoe()
@@ -228,6 +230,55 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.equal(state.entries[0].phase, "building")
 })
 
+test("provisions and validates the worktree before starting either agent", async () => {
+  const aoe = new FakeAoe(), state = new FakeState(), events = []
+  aoe.startSession = async () => events.push("start-author")
+  const add = aoe.addSession.bind(aoe)
+  aoe.addSession = async (...args) => { events.push("start-reviewer"); return add(...args) }
+  await startLane({
+    aoe, state, repoPath: "/repo", issue: { number: 44 }, branch: "issue/44-validate", openingPrompt: "build",
+    authorModel: "custom/author", reviewerModel: "custom/reviewer", planModel: "custom/planner",
+    roles: { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "opencode", tool: "opencode" } },
+    provision: async (path) => { assert.equal(path, "/repo--issue-44-add-calendar-export"); events.push("provision") },
+    validateModels: async (entries, { cwd }) => {
+      assert.equal(cwd, "/repo--issue-44-add-calendar-export")
+      assert.deepEqual(entries.map(({ role, model }) => [role, model]), [["author", "custom/author"], ["reviewer", "custom/reviewer"], ["planning", "custom/planner"]])
+      assert.equal(aoe.authorOptions.start, false)
+      assert.equal(aoe.authorOptions.requireNew, true)
+      events.push("validate")
+    },
+  })
+  assert.deepEqual(events, ["provision", "validate", "start-author", "start-reviewer"])
+})
+
+test("a model available in the source but absent in the worktree blocks normal and capture starts and cleans up", async (t) => {
+  for (const investigationCapture of [false, true]) {
+    const fixture = await captureGitFixture(t, "codex/worktree-validation")
+    const captureHome = await mkdtemp(join(tmpdir(), "tars-validation-home-"))
+    t.after(() => rm(captureHome, { recursive: true, force: true }))
+    const aoe = new FakeAoe(), state = new FakeState(), runtime = new FakeCaptureRuntime()
+    aoe.worktreePath = fixture.worktreePath
+    const entries = [{ role: "author", model: "custom/project-model", harness: { key: "opencode", tool: "opencode" } }]
+    const validateModels = (entries, { cwd }) => assertLaneModels(entries, {
+      cwd, readOpenCode: async () => cwd === fixture.repo ? ["custom/project-model"] : ["custom/other-model"],
+    })
+    await validateModels(entries, { cwd: fixture.repo })
+    await assert.rejects(startLane({
+      aoe, state, repoPath: fixture.repo, issue: { number: 44 }, branch: fixture.branch, openingPrompt: "build",
+      roles: { author: entries[0].harness, reviewer: entries[0].harness }, authorModel: entries[0].model,
+      validateModels, investigationCapture, captureRuntime: runtime, captureHome,
+    }), /author OpenCode model.*unavailable/)
+    assert.equal(aoe.added.length, 1)
+    assert.deepEqual(aoe.started, [])
+    assert.deepEqual(runtime.started, [])
+    assert.deepEqual(aoe.sent, [])
+    assert.deepEqual(state.entries, [])
+    assert.deepEqual(aoe.removed, [["open-44", { deleteWorktree: true, deleteBranch: true, force: true, purge: true }]])
+    await assert.rejects(readFile(join(fixture.worktreePath, "README.md")), { code: "ENOENT" })
+    assert.equal((await execFileAsync("git", ["-C", fixture.repo, "branch", "--list", fixture.branch])).stdout.trim(), "")
+  }
+})
+
 test("starts a capture-enabled Codex lane with separate trace roots under CODEX_HOME", async () => {
   const previousCodexHome = process.env.CODEX_HOME
   const codexHome = await mkdtemp(join(tmpdir(), "tars-codex-home-"))
@@ -357,7 +408,7 @@ test("starts two OpenCode capture roles with distinct native sessions", async (t
     issue: { number: 26, title: "Capture" }, branch: "issue/26-capture",
     worktreeName: "issue-26-capture", maxRounds: 5, planning: "not_required",
     openingPrompt: "start", investigationCapture: true,
-    roles: { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "opencode", tool: "opencode" } },
+    roles: { author: { key: "opencode", tool: "opencode", launchArgs: ["--pure"] }, reviewer: { key: "opencode", tool: "opencode" } },
   })
   const lane = state.entries[0]
   assert.equal(lane.authorEvidence.nativeSessionId, "ses_1")
@@ -366,6 +417,8 @@ test("starts two OpenCode capture roles with distinct native sessions", async (t
   assert.equal(aoe.attachedCommand, "opencode attach http://127.0.0.1:4001 --session ses_1")
   assert.equal(aoe.reviewerCommand, "opencode attach http://127.0.0.1:4002 --session ses_2")
   assert.deepEqual(runtime.created.map(({ worktreePath }) => worktreePath), [lane.worktreePath, lane.worktreePath])
+  assert.deepEqual(runtime.started.map(({ launchArgs }) => launchArgs), [["--pure"], []])
+  assert.deepEqual(lane.authorEvidence.launchArgs, ["--pure"])
 })
 
 test("directly binds an OpenCode author to its native session in the new worktree", async (t) => {

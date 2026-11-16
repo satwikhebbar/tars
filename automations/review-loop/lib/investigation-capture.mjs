@@ -6,6 +6,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
+import { catalogArgs } from "./models.mjs"
 
 const SUPPORTED_HARNESSES = new Set(["codex", "opencode"])
 const execFileAsync = promisify(execFile)
@@ -58,15 +59,16 @@ export function openCodeServerConfig({ model, agent, buildModel, planModel } = {
 }
 
 /** Native identity is returned by OpenCode itself and kept only in active lane state. */
-export async function createOpenCodeEvidence({ worktreePath, role, model, agent, buildModel, planModel, runtime = defaultOpenCodeRuntime }) {
+export async function createOpenCodeEvidence({ worktreePath, role, model, agent, buildModel, planModel, harness, runtime = defaultOpenCodeRuntime }) {
   const port = await runtime.availablePort()
-  const serverPid = await runtime.startServer({ worktreePath, port, config: openCodeServerConfig({ model, agent, buildModel, planModel }) })
+  const launchArgs = catalogArgs({ ...harness, key: "opencode" })
+  const serverPid = await runtime.startServer({ worktreePath, port, launchArgs, config: openCodeServerConfig({ model, agent, buildModel, planModel }) })
   try {
     const session = await runtime.createSession({ port, worktreePath, title: `TARS ${role}` })
     if (typeof session.id !== "string" || !session.id.startsWith("ses_") || session.directory !== worktreePath) {
       throw new Error(`OpenCode created a session outside the lane worktree ${worktreePath}.`)
     }
-    return { status: "available", harness: "opencode", nativeSessionId: session.id, serverPort: port, serverPid, model: model ?? null, initialAgent: agent ?? "build", buildModel: buildModel ?? null, planModel: planModel ?? null }
+    return { status: "available", harness: "opencode", nativeSessionId: session.id, serverPort: port, serverPid, model: model ?? null, initialAgent: agent ?? "build", buildModel: buildModel ?? null, planModel: planModel ?? null, launchArgs }
   } catch (error) {
     await runtime.stopServer(serverPid)
     throw error
@@ -77,7 +79,7 @@ export async function createOpenCodeEvidence({ worktreePath, role, model, agent,
 export async function ensureOpenCodeServer({ evidence, worktreePath, runtime = defaultOpenCodeRuntime }) {
   if (evidence?.harness !== "opencode" || evidence.status !== "available") return evidence
   if (await runtime.hasSession({ port: evidence.serverPort, sessionId: evidence.nativeSessionId, worktreePath })) return evidence
-  const serverPid = await runtime.startServer({ worktreePath, port: evidence.serverPort, config: openCodeServerConfig({ model: evidence.model, agent: evidence.initialAgent, buildModel: evidence.buildModel, planModel: evidence.planModel }) })
+  const serverPid = await runtime.startServer({ worktreePath, port: evidence.serverPort, launchArgs: evidence.launchArgs, config: openCodeServerConfig({ model: evidence.model, agent: evidence.initialAgent, buildModel: evidence.buildModel, planModel: evidence.planModel }) })
   if (!await runtime.hasSession({ port: evidence.serverPort, sessionId: evidence.nativeSessionId, worktreePath })) {
     await runtime.stopServer(serverPid)
     throw new Error(`OpenCode native session ${evidence.nativeSessionId} is unavailable after restarting its server.`)
@@ -97,8 +99,8 @@ const defaultOpenCodeRuntime = {
     await new Promise((resolve) => server.close(resolve))
     return port
   },
-  async startServer({ worktreePath, port, config }) {
-    const child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+  async startServer({ worktreePath, port, config, launchArgs = [] }) {
+    const child = spawn("opencode", ["serve", ...launchArgs, "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: worktreePath,
       env: { ...process.env, OPENCODE_CONFIG_CONTENT: config },
       detached: true,

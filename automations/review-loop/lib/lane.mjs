@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { groupForWorktree } from "./aoe.mjs"
 import { captureLaunchCommand, createOpenCodeEvidence, ensureOpenCodeServer, openCodeAttachCommand, prepareCapture, stopOpenCodeServer } from "./investigation-capture.mjs"
 import { markedDispatch } from "./investigation-dispatch.mjs"
+import { assertLaneModels } from "./models.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -75,7 +76,7 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, investigationCapture = false, captureRuntime, captureHome }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, validateModels = assertLaneModels, investigationCapture = false, captureRuntime, captureHome }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
   const capture = investigationCapture ? await prepareCapture({ roles, codexHome: captureHome }) : null
   let author
@@ -89,24 +90,31 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
       // role-level planning prompt, but must not be passed OpenCode CLI flags.
       extraArgs: capture && roles.author.key === "opencode" ? [] : [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
       command: captureLaunchCommand(roles.author, capture?.roles.author),
-      requireNew: investigationCapture,
-      start: !(capture && roles.author.key === "opencode"),
+      requireNew: true,
+      start: false,
     })
     worktreePath = author.path
     const group = groupForWorktree(worktreePath)
     await provision?.(worktreePath)
+    await validateModels([
+      { harness: roles.author, model: authorModel, role: "author" },
+      { harness: roles.reviewer, model: reviewerModel, role: "reviewer" },
+      { harness: roles.author, model: planModel, role: "planning" },
+    ], { cwd: worktreePath })
     if (capture && roles.author.key === "opencode") {
       capture.roles.author = await createOpenCodeEvidence({
-        worktreePath, role: "author", model: authorModel,
+        worktreePath, role: "author", model: authorModel, harness: roles.author,
         agent: planning === "required" ? "tars-plan" : "build", buildModel: authorModel, planModel, runtime: captureRuntime,
       })
       await aoe.removeSession(author.id, { purge: true })
       author = null
       author = await aoe.attachWorktreeSession(repoPath, branch, worktreeName, openCodeAttachCommand(capture.roles.author), { group })
+    } else {
+      await aoe.startSession(author.id)
     }
     await aoe.moveSessionToGroup(author.id, group)
     if (capture && roles.reviewer.key === "opencode") {
-      capture.roles.reviewer = await createOpenCodeEvidence({ worktreePath, role: "reviewer", model: reviewerModel, agent: "build", buildModel: reviewerModel, runtime: captureRuntime })
+      capture.roles.reviewer = await createOpenCodeEvidence({ worktreePath, role: "reviewer", model: reviewerModel, harness: roles.reviewer, agent: "build", buildModel: reviewerModel, runtime: captureRuntime })
     }
     reviewer = await aoe.addSession(worktreePath, roles.reviewer.tool, `Issue ${issue.number} reviewer`, {
       extraArgs: capture && roles.reviewer.key === "opencode" ? [] : [...(roles.reviewer.launchArgs ?? []), ...modelArgs(reviewerModel)],
@@ -142,12 +150,12 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     if (capture) state.markDispatched(worktreePath, "lane-start", { dispatchId: opening.id, destinationRole: "author" })
     return { worktreePath, authorSessionId: author.id, reviewerSessionId: reviewer.id, opencodeSessionId: author.id, codexSessionId: reviewer.id }
   } catch (error) {
-    if (capture && !registered) await cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime })
+    if (!registered) await cleanupFailedStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime })
     throw error
   }
 }
 
-async function cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime }) {
+async function cleanupFailedStart({ aoe, author, reviewer, worktreePath, repoPath, branch, capture, captureRuntime }) {
   // AoE creates a session record before starting its terminal. If start fails,
   // addSession() throws before it can return that reviewer to us. Discover it
   // from this freshly-created worktree and remove it before its owner, whose
@@ -179,9 +187,9 @@ async function cleanupFailedCaptureStart({ aoe, author, reviewer, worktreePath, 
     await execFileAsync("git", ["-C", repoPath, "branch", "-D", branch]).catch(() => {})
   }
   if (worktreePath) await removeRetainedCaptureWorktree(worktreePath, { force: true }).catch(() => {})
-  await stopOpenCodeServer(capture.roles.author, captureRuntime).catch(() => {})
-  await stopOpenCodeServer(capture.roles.reviewer, captureRuntime).catch(() => {})
-  await rm(capture.root, { recursive: true, force: true }).catch(() => {})
+  await stopOpenCodeServer(capture?.roles.author, captureRuntime).catch(() => {})
+  await stopOpenCodeServer(capture?.roles.reviewer, captureRuntime).catch(() => {})
+  if (capture) await rm(capture.root, { recursive: true, force: true }).catch(() => {})
 }
 
 function modelArgs(model) {

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import test from "node:test"
-import { assertLaneModels, readCodexCatalog } from "../lib/models.mjs"
+import { assertLaneModels, readCodexCatalog, readOpenCodeCatalog } from "../lib/models.mjs"
 
 const exec = promisify(execFile)
 const entry = (role, model, key = "codex") => ({ role, model, harness: { key } })
@@ -31,7 +31,7 @@ test("validates syntax without imposing a model allowlist on other providers", a
     await assert.rejects(assertLaneModels([entry("author", model)]), /model must be/)
   }
   await assert.rejects(assertLaneModels([entry("planning", "gpt-6-luna", "opencode")]), /planning model.*provider\/model/)
-  await assertLaneModels([entry("author", "openai/gpt-6-luna", "opencode"), entry("reviewer", "sonnet", "claude")])
+  await assertLaneModels([entry("author", "openai/gpt-6-luna", "opencode"), entry("reviewer", "sonnet", "claude")], { readOpenCode: async () => ["openai/gpt-6-luna"] })
   await assertLaneModels([entry("author", "custom/model")], { readCatalog: async () => null })
   await assertLaneModels([entry("author", undefined)], { readCatalog: () => assert.fail("omitted model uses harness default") })
   await assert.rejects(assertLaneModels([entry("author", "gpt-6-luna")], { readCatalog: async () => { throw new Error("unavailable") } }), /unavailable/)
@@ -118,4 +118,135 @@ test("lane start rejects an unknown bare reviewer ID before issue lookup or AoE"
     return true
   })
   assert.match(await readFile(f.log, "utf8"), /model\/list/)
+})
+
+async function openCodeFixture(t, { output = "custom/coding-alias\nopenrouter/anthropic/claude-model:free\n", mode = "normal" } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "tars-opencode-models-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = join(directory, "opencode"), log = join(directory, "calls.jsonl")
+  await writeFile(command, `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args,cwd:process.cwd(),config:process.env.OPENCODE_CONFIG_CONTENT}) + "\\n");
+if (${JSON.stringify(mode)} === "hang") setInterval(() => {}, 1000);
+else if (${JSON.stringify(mode)} === "error") { console.error("SECRET provider diagnostic"); process.exit(1); }
+else process.stdout.write(${JSON.stringify(output)});
+`)
+  await chmod(command, 0o700)
+  return { directory, command, log, read: (options = {}) => readOpenCodeCatalog({ command, cwd: directory, ...options }) }
+}
+
+test("OpenCode catalog preserves custom aliases, nested IDs and the effective configuration", async (t) => {
+  const f = await openCodeFixture(t, { output: "custom/coding-alias\r\nopenrouter/anthropic/claude-model:free\r\ncustom/coding-alias\r\n" })
+  assert.deepEqual(await f.read({ harness: { launchArgs: ["--pure", "--model", "ignored", "--agent", "build"] } }), ["custom/coding-alias", "openrouter/anthropic/claude-model:free"])
+  const call = JSON.parse((await readFile(f.log, "utf8")).trim())
+  assert.deepEqual(call.args, ["models", "--pure"])
+  assert.equal(call.cwd, await realpath(f.directory))
+  assert.equal(call.config, process.env.OPENCODE_CONFIG_CONTENT)
+})
+
+test("OpenCode validates all roles, queries once per configuration and coexists with Codex", async () => {
+  const calls = []
+  const options = { cwd: "/repo", readOpenCode: async ({ cwd, harness }) => {
+    calls.push([cwd, harness.launchArgs])
+    return ["custom/coding-alias", "openrouter/anthropic/claude-model:free"]
+  }, readCatalog: async () => ["gpt-6-luna"] }
+  await assertLaneModels([
+    entry("author", "custom/coding-alias", "opencode"),
+    entry("reviewer", "gpt-6-luna"),
+    entry("planning", "openrouter/anthropic/claude-model:free", "opencode"),
+  ], options)
+  assert.equal(calls.length, 1)
+  await assertLaneModels([
+    { ...entry("author", "custom/coding-alias", "opencode"), harness: { key: "opencode", launchArgs: ["--pure"] } },
+    entry("reviewer", "custom/coding-alias", "opencode"),
+  ], options)
+  assert.equal(calls.length, 3)
+  for (const role of ["author", "reviewer", "planning", "classifier"]) {
+    await assert.rejects(assertLaneModels([entry(role, "custom/typo", "opencode")], options), new RegExp(`${role} OpenCode model.*Model is not in the effective catalog`))
+    await assert.rejects(assertLaneModels([entry(role, "disabled/model", "opencode")], options), /Provider 'disabled' is unavailable/)
+  }
+  await assertLaneModels([entry("author", undefined, "opencode")], { readOpenCode: () => assert.fail("omitted selection uses the harness default") })
+})
+
+test("OpenCode catalog command errors, empty/malformed output, missing binary and timeout fail closed", async (t) => {
+  for (const output of ["", "Welcome to OpenCode\ncustom/model\n", "custom/\n", "/model\n", "custom/bad model\n"]) {
+    const f = await openCodeFixture(t, { output })
+    await assert.rejects(f.read(), /Cannot validate OpenCode models.*empty or malformed/)
+  }
+  for (const mode of ["error", "hang"]) {
+    const f = await openCodeFixture(t, { mode })
+    await assert.rejects(f.read({ timeoutMs: mode === "hang" ? 100 : 2000 }), (error) => {
+      assert.match(error.message, /Cannot validate OpenCode models/)
+      assert.doesNotMatch(error.message, /SECRET/)
+      return true
+    })
+  }
+  await assert.rejects(readOpenCodeCatalog({ command: "/nonexistent/tars-opencode" }), /Cannot validate OpenCode models.*ENOENT/)
+})
+
+test("CLI rejects unavailable OpenCode author, reviewer and planning selections before AoE or issue lookup", async (t) => {
+  const f = await openCodeFixture(t)
+  const config = join(f.directory, "config.json")
+  const cli = new URL("../cli.mjs", import.meta.url).pathname
+  for (const [role, flag] of [["author", "author"], ["reviewer", "reviewer"], ["planning", "plan"]]) {
+    for (const configured of [false, true]) {
+      await writeFile(config, JSON.stringify({ harnesses: { opencode: { defaults: configured ? { [role]: { model: "custom/typo" } } : {} } } }))
+      await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "opencode", "--reviewer", "opencode", "--planning", "always", "--config", config, "--state", join(f.directory, "state.sqlite"), ...(configured ? [] : [`--${flag}-model`, "custom/typo"])], { env: { ...process.env, PATH: f.directory } }), (error) => {
+        assert.match(error.stderr, new RegExp(`${role} OpenCode model 'custom/typo' is unavailable`))
+        assert.doesNotMatch(error.stderr, /lane preflight:|started:|spawn gh|spawn aoe/)
+        return true
+      })
+    }
+  }
+})
+
+test("CLI validates explicit/configured classifier models in isolation, before fallback or issue lookup", async (t) => {
+  const f = await openCodeFixture(t)
+  const config = join(f.directory, "config.json")
+  const aoe = join(f.directory, "aoe")
+  await writeFile(aoe, `#!${process.execPath}\nconsole.log("✓ opencode installed");\n`)
+  await chmod(aoe, 0o700)
+  const cli = new URL("../cli.mjs", import.meta.url).pathname
+  for (const configured of [false, true]) {
+    await writeFile(config, JSON.stringify({ harnesses: { opencode: { defaults: configured ? { classifier: { model: "isolated/typo" } } : {} } } }))
+    await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "opencode", "--reviewer", "opencode", "--config", config, "--state", join(f.directory, "state.sqlite"), ...(configured ? [] : ["--classifier-model", "isolated/typo"])], { env: { ...process.env, PATH: f.directory } }), (error) => {
+      assert.match(error.stderr, /classifier OpenCode model 'isolated\/typo' is unavailable/)
+      assert.doesNotMatch(error.stderr, /lane preflight:|started:|spawn gh/)
+      return true
+    })
+  }
+  const calls = (await readFile(f.log, "utf8")).trim().split("\n").map(JSON.parse)
+  assert.equal(calls.length, 2)
+  for (const call of calls) {
+    assert.deepEqual(call.args, ["models", "--pure"])
+    assert.notEqual(call.cwd, await realpath(f.directory))
+  }
+})
+
+test("CLI does not pass a project author model to OpenCode classification by default", async (t) => {
+  const f = await openCodeFixture(t)
+  const config = join(f.directory, "config.json")
+  await writeFile(config, "{}")
+  for (const [name, script] of [
+    ["aoe", 'if (process.argv[2] === "agents") console.log("✓ opencode installed"); else { console.error("STOP before worktree creation"); process.exit(1); }'],
+    ["gh", 'console.log(JSON.stringify({number:100,title:"Test isolated classification",body:"Implement a small fix",url:"https://example.test/issues/100",labels:[]}));'],
+  ]) {
+    const command = join(f.directory, name)
+    await writeFile(command, `#!${process.execPath}\n${script}\n`)
+    await chmod(command, 0o700)
+  }
+  const cli = new URL("../cli.mjs", import.meta.url).pathname
+  await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "opencode", "--reviewer", "opencode", "--author-model", "custom/coding-alias", "--config", config, "--state", join(f.directory, "state.sqlite")], { env: { ...process.env, PATH: f.directory } }), (error) => {
+    assert.match(error.stderr, /STOP before worktree creation/)
+    return true
+  })
+  const calls = (await readFile(f.log, "utf8")).trim().split("\n").map(JSON.parse)
+  assert.deepEqual(calls[0].args, ["models"])
+  assert.equal(calls[0].cwd, await realpath(f.directory))
+  const classifier = calls.find(({ args }) => args[0] === "run")
+  assert.ok(classifier)
+  assert.ok(classifier.args.includes("--pure"))
+  assert.ok(!classifier.args.includes("--model"))
+  assert.notEqual(classifier.cwd, calls[0].cwd)
 })
