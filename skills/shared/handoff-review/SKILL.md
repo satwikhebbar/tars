@@ -69,3 +69,7 @@ cleanup: archive
 - Set `created_by: reviewer`, copy `workflow_id`, `round`, `iteration` when supplied, and set `responds_to` to the request id. Before publishing, run `tars handoff validate --path <handoff-file>` and correct every reported error.
 - Use outcome `approved`, `changes_requested`, or `blocked`. An approved plan must include positive `iteration_count`, a numbered implementation-iterations schedule, and the review budget the implementation may consume: either `review_budget <total>` or `review_budget_per_iteration <allowance>` (allowance × `iteration_count`).
 - Review only the requested plan or immutable commit. Do not edit implementation files.
+
+### Code review method
+
+For an `implementation-response`, read and follow [CODE-REVIEW.md](references/CODE-REVIEW.md) before reviewing the commit.
