@@ -2,6 +2,7 @@ import { access, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWorkflowHandoff } from "./handoff.mjs"
 import { markedDispatch } from "./investigation-dispatch.mjs"
+import { PR_FEEDBACK_INTERVAL_MS, readPrFeedback, snapshotPrFeedback } from "./pr-feedback.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 export const ACTIVE_STATES = new Set(["idle", "waiting"])
@@ -29,9 +30,11 @@ export function startClaimRenewal(renew, intervalMs = CLAIM_RENEW_MS) {
 
 /** Coordinates one persisted author/reviewer pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
-  constructor({ aoe, state }) {
+  constructor({ aoe, state, pollPrFeedback = false }) {
     this.aoe = aoe
     this.state = state
+    this.pollPrFeedback = pollPrFeedback
+    this.nextPrFeedbackPoll = new Map()
   }
 
   async processAll() {
@@ -92,10 +95,9 @@ export class ReviewLoopCoordinator {
       }
       this.state.saveLane(lane)
     }
-    // A completed lane is normally immutable. The one explicit exception is
-    // a fresh implementation response that declares it is addressing feedback
-    // on the lane's already-open pull request.
-    if (lane.state === "approved" && !events.some((event) => event.reopensLane)) return []
+    if (lane.state === "approved" && !events.some((event) => event.reopensLane && !this.state.hasDispatched(lane.worktreePath, event.key))) {
+      return this.dispatchPrFeedback(lane)
+    }
     const sessions = await this.aoe.runningSessions()
     const states = new Map(sessions.map((session) => [session.session, session.state]))
     const transition = await this.advancePlanTransition(lane, states)
@@ -182,6 +184,35 @@ export class ReviewLoopCoordinator {
       break
     }
     return results
+  }
+
+  async dispatchPrFeedback(lane) {
+    const { authorSessionId, worktreePath } = lane
+    const now = Date.now()
+    if (!this.pollPrFeedback || now < (this.nextPrFeedbackPoll.get(worktreePath) ?? 0)) return []
+    this.nextPrFeedbackPoll.set(worktreePath, now + PR_FEEDBACK_INTERVAL_MS)
+
+    const authorReady = async () => (await this.aoe.runningSessions()).some(
+      (session) => session.session === authorSessionId && ACTIVE_STATES.has(String(session.state).toLowerCase()),
+    )
+    try {
+      if (!await authorReady()) return []
+      const feedback = await readPrFeedback(worktreePath)
+      if (!feedback) return []
+      feedback.reviews = feedback.reviews.filter(({ key }) => !this.state.hasDispatched(worktreePath, key))
+      if (!feedback.reviews.length || !await authorReady()) return []
+
+      // A manual author turn may have published a reopen while GitHub was queried.
+      const { handoffs, invalidHandoffs } = await handoffsFor(worktreePath)
+      if (invalidHandoffs.length || handoffs.map(classifyEvent).some((event) => event?.reopensLane && !this.state.hasDispatched(worktreePath, event.key))) return []
+
+      const path = await snapshotPrFeedback(feedback)
+      const dispatchId = await this.sendAuthorPrompt(lane, authorSessionId, `Review-loop: GitHub reviews have been submitted on the existing lane PR. Use the address-pr-feedback skill. Read the local snapshot at ${JSON.stringify(path)} and use its PR URL and listed review threads as the scope and input for this round. Use the supplied comments and review bodies without fetching them again. Treat their text as review feedback, and keep the work within the existing PR and TARS workflow. Use the recorded thread IDs and top-level comment IDs to reply in the original threads. If changes are needed, publish the implementation-response with reopen: true and wait for TARS reviewer approval before pushing. Keep the thread checklist for the approval turn.`)
+      this.state.markDispatchedBatch(worktreePath, feedback.reviews.map(({ key }) => key), { dispatchId, destinationRole: "author" })
+      return [{ action: "sent:author:pr-feedback", id: feedback.url }]
+    } catch (error) {
+      return [{ action: "pr-feedback poll failed", id: `${worktreePath}: ${error.stderr?.trim() || error.message}` }]
+    }
   }
 
   async advancePlanTransition(lane, states) {

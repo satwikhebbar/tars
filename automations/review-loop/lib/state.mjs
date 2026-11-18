@@ -224,6 +224,13 @@ export class StateStore {
       .run(worktreePath, eventKey, new Date().toISOString(), dispatchId, boundaryKind, destinationRole)
   }
 
+  markDispatchedBatch(worktreePath, eventKeys, { dispatchId, destinationRole }) {
+    this.database.prepare(`
+      INSERT OR IGNORE INTO dispatched_events (worktree_path, event_key, created_at, dispatch_id, destination_role)
+      SELECT ?, value, ?, ?, ? FROM json_each(?)
+    `).run(worktreePath, new Date().toISOString(), dispatchId, destinationRole, JSON.stringify(eventKeys))
+  }
+
   /**
    * Atomically journals an event as dispatched and persists the accompanying
    * lane update. The dispatch marker and the lane save (for example the

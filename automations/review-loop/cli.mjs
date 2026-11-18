@@ -154,11 +154,11 @@ async function start({ values, state, config }) {
 }
 
 async function watch({ values, state, aoe = new AoeClient() }) {
-  const coordinator = new ReviewLoopCoordinator({ aoe, state })
+  const coordinator = new ReviewLoopCoordinator({ aoe, state, pollPrFeedback: true })
   const interval = positiveInteger(values.interval, DEFAULT_INTERVAL_MS, "--interval")
   const processOnce = async () => {
     const results = await coordinator.processAll()
-    for (const result of results) console.log(`${result.action}: ${result.event.handoff.metadata.id}`)
+    for (const result of results) console.log(`${result.action}: ${result.id ?? result.event.handoff.metadata.id}`)
   }
   await processOnce()
   if (values.once) return

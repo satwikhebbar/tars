@@ -287,10 +287,11 @@ TARS stores the current
 iteration per worktree, so multiple plan-first and direct-build lanes can
 advance concurrently without crossing handoffs.
 
-After you or a GitHub-integrated reviewer leaves feedback on an approved PR,
-ask the lane's existing author session to use `address-pr-feedback`. It reads
-the existing PR feedback, commits and publishes an explicit reopen handoff, and
-leaves delivery to the shared watcher. No second lane or pull request is made.
+Start `tars watch` to have the shared watcher wake the lane's
+author when it finds newly submitted inline review feedback on an approved
+lane's PR. You can also ask the author session to use `address-pr-feedback`
+directly. Both paths use the existing lane and PR. See the polling scope and
+setup in [Pick up submitted PR reviews](automations/review-loop/README.md#pick-up-submitted-pr-reviews).
 
 ## Day-to-day lane commands
 

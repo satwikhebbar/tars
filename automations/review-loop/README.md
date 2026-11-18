@@ -33,6 +33,26 @@ tars start \
 
 Use `--once` for a single scan and `--max-rounds 5` to cap a lane. View registered lanes with `tars status`.
 
+## Pick up submitted PR reviews
+
+Refresh an existing CLI installation with `node setup.mjs provision`, then
+restart the shared watcher with `tars watch`. It checks approved
+lanes every 15 minutes for an open, non-draft PR on the worktree branch. Keep
+the AoE author session running and authenticate `gh` for the repository.
+
+The watcher picks up unresolved inline threads opened in a submitted review
+by a GitHub user with push access. The first poll can pick up existing threads.
+Draft or dismissed reviews, standalone replies, and reviews with only a
+summary are outside this trigger. The manual `address-pr-feedback` workflow
+remains available for those cases.
+
+When the author is ready, TARS sends the PR URL, review summaries, and thread
+data in a local JSON snapshot. The author uses that input and the existing
+reviewer handoff before pushing any fixes. TARS records each delivered review
+submission in SQLite, so a watcher restart does not repeat a successful
+dispatch and a later review can start another round. Failed sends are eligible
+again on the next poll. Dispatch records track delivery to AoE.
+
 ## Create and manage lanes
 
 When a lane creates a new AoE session, TARS waits for the agent's terminal UI
