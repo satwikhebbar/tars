@@ -405,13 +405,18 @@ function normalizeLane(lane) {
 }
 
 /**
- * Resolves the lane created for a GitHub issue without guessing from the
- * filesystem. Only TARS's `issue-<number>-<slug>` worktree convention is
- * eligible, and more than one eligible registered lane is an error.
+ * Resolves a registered lane for an issue number. Persisted issue bindings
+ * support custom worktree names; legacy lanes fall back to TARS's
+ * `issue-<number>-<slug>` convention. Multiple matches are an error.
  */
 export function worktreeForIssue(state, issueNumber) {
   const worktreeName = new RegExp(`^issue-${issueNumber}-[a-z0-9]+(?:-[a-z0-9]+)*$`)
-  const matches = state.lanes().filter((lane) => worktreeName.test(lane.worktreePath.split("/").at(-1)))
+  const issueUrl = new RegExp(`/issues/${issueNumber}/?$`, "i")
+  const matches = state.lanes().filter((lane) => {
+    const boundIssue = state.laneIssue?.(lane.worktreePath)
+    if (boundIssue) return issueUrl.test(boundIssue)
+    return worktreeName.test(lane.worktreePath.split("/").at(-1))
+  })
   if (matches.length === 1) return matches[0].worktreePath
   if (matches.length === 0) {
     throw new Error(

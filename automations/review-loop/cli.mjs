@@ -372,11 +372,14 @@ async function recover({ values, state }) {
 }
 
 async function setMaxRounds({ values, state }) {
-  if (!values.worktree) throw new Error("lane set-max-rounds requires --worktree <path>")
+  if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
+  if (!values.worktree && !values.issue) throw new Error("lane set-max-rounds requires --worktree <path> or --issue <number>")
   if (!values["max-rounds"] && !values["review-budget"]) {
     throw new Error("lane set-max-rounds requires --max-rounds <number> or --review-budget <number>")
   }
-  const worktreePath = await realpath(values.worktree)
+  const worktreePath = values.worktree
+    ? await realpath(values.worktree)
+    : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
   const maxRounds = positiveInteger(values["max-rounds"], undefined, "--max-rounds")
   const reviewBudget = positiveInteger(values["review-budget"], undefined, "--review-budget")
   const lane = setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, resume: values.resume })
@@ -463,7 +466,7 @@ function printUsage() {
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--classifier-model <model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
-  tars lane set-max-rounds --worktree <path> [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
+  tars lane set-max-rounds (--worktree <path> | --issue <number>) [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
   tars lane evidence (--worktree <path> | --issue <number>) [--force]

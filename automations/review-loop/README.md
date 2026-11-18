@@ -329,11 +329,13 @@ To recover an exhausted budget, raise it and resume the lane; the consumed
 counter is never reset:
 
 ```bash
-tars lane set-max-rounds --worktree /path/to/worktree --review-budget 10 --resume
+tars lane set-max-rounds --issue 44 --review-budget 10 --resume
 ```
 
-The same command still adjusts `max_rounds` and requires at least one of
-`--max-rounds` / `--review-budget`.
+Use either `--worktree <path>` or `--issue <number>` to select the lane. An
+issue number must identify exactly one registered lane; when it is ambiguous,
+select the lane by worktree path. The same command still adjusts `max_rounds`
+and requires at least one of `--max-rounds` / `--review-budget`.
 
 ## Re-reviewing feedback on an existing PR
 
