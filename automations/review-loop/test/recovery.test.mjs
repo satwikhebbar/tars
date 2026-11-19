@@ -12,7 +12,7 @@ test("an approved lane with no reopen event needs no action", async () => {
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "no_action")
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is no_action/,
   )
   fixture.state.close()
@@ -55,7 +55,7 @@ test("a blocked lane stays blocked and cannot be dispatched", async () => {
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "blocked")
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is blocked/,
   )
   fixture.state.close()
@@ -71,6 +71,26 @@ test("an undispatched event over max_rounds blocks the lane", async () => {
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "blocked")
   assert.match(analysis.reasons[0], /max_rounds 1/)
+  fixture.state.close()
+})
+
+test("blocked diagnosis identifies the reviewer handoff rather than blaming round limits", async () => {
+  const fixture = await laneFixture({ state: "blocked", maxRounds: 5 })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/blocker.md", `id: bad-commit\ntype: code-review\nworkflow_id: fix\nround: 6\noutcome: blocked`)
+  fixture.state.markDispatched(fixture.worktree, "review:bad-commit:blocked")
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "blocked")
+  assert.match(analysis.reasons[0], /reviewer reported a blocker.*blocker.md/)
+  fixture.state.close()
+})
+
+test("a terminal blocker is not a stale prompt after a corrected request is dispatched", async () => {
+  const fixture = await laneFixture({ state: "reviewing" })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/blocker.md", `id: bad-commit\ntype: code-review\nworkflow_id: fix\nround: 2\noutcome: blocked`)
+  fixture.state.markDispatched(fixture.worktree, "review:bad-commit:blocked", { createdAt: "2000-01-01T00:00:00.000Z" })
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.notEqual(analysis.verdict, "stale_delivery")
+  assert.equal(analysis.unconfirmed.length, 0)
   fixture.state.close()
 })
 
@@ -131,7 +151,7 @@ test("resume without flags is read-only", async () => {
     `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
   )
   const before = fixture.state.lane(fixture.worktree)
-  const result = await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  const result = await resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(result.analysis.verdict, "needs_dispatch")
   assert.equal(result.action, null)
   assert.equal(fixture.aoe.sent.length, 0)
@@ -153,7 +173,7 @@ test("a single pending event with an idle target reports needs_dispatch and disp
   assert.equal(analysis.nextTarget, "codex-1")
   assert.match(formatAnalysis(analysis), /Verdict: {2}needs_dispatch/)
 
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -167,7 +187,7 @@ test("a single pending event with an idle target reports needs_dispatch and disp
   assert.equal(fixture.state.lane(fixture.worktree).state, "reviewing")
 
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is in_flight/,
   )
   fixture.state.close()
@@ -189,7 +209,7 @@ test("multiple pending events are ambiguous and refuse to dispatch", async () =>
   assert.equal(analysis.verdict, "ambiguous")
   assert.equal(analysis.pending.length, 2)
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is ambiguous/,
   )
   fixture.state.close()
@@ -208,7 +228,7 @@ test("an old recorded delivery with no advancement and an idle session is stale 
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "stale_delivery")
 
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -239,7 +259,7 @@ test("a recent or busy recorded delivery is in flight and refuses to re-dispatch
   const busy = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(busy.verdict, "in_flight")
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is in_flight/,
   )
   fixture.state.close()
@@ -258,7 +278,7 @@ test("a missing registered session reports sessions_missing and --create-session
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "sessions_missing")
 
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -288,7 +308,7 @@ test("replaces a missing capture OpenCode role with a new native ID and retains 
     async createSession({ worktreePath }) { return { id: "ses_new", directory: worktreePath } },
     async stopServer(pid) { this.stopped.push(pid) },
   }
-  await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime })
+  await resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime })
   const lane = fixture.state.lane(fixture.worktree)
   assert.equal(lane.authorEvidence.nativeSessionId, "ses_new")
   assert.equal(lane.authorEvidence.previous[0].nativeSessionId, "ses_old")
@@ -315,7 +335,7 @@ test("failed capture replacement removes its AoE session and new server while re
     async stopServer(pid) { this.stopped.push(pid) },
   }
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true, captureRuntime: runtime }),
     /replacement startup failed/,
   )
   assert.deepEqual(removed, [["opencode-new-1", { purge: true, force: true }]])
@@ -340,12 +360,12 @@ test("a session id reused by another worktree reports sessions_missing and is re
   assert.equal(fixture.aoe.sent.length, 0)
 
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is sessions_missing/,
   )
   assert.equal(fixture.aoe.sent.length, 0)
 
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -379,12 +399,12 @@ test("a session id reused by the wrong tool reports sessions_missing and never d
   assert.equal(fixture.aoe.sent.length, 0)
 
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is sessions_missing/,
   )
   assert.equal(fixture.aoe.sent.length, 0)
 
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -403,7 +423,7 @@ test("a session id reused by the wrong tool reports sessions_missing and never d
 test("--create-sessions refuses when the verdict is not sessions_missing", async () => {
   const fixture = await laneFixture()
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, createSessions: true }),
     /Refusing --create-sessions: verdict is no_action/,
   )
   fixture.state.close()
@@ -415,7 +435,7 @@ test("a dead session reports inactive_sessions and never dispatches", async () =
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "inactive_sessions")
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /Refusing --dispatch: verdict is inactive_sessions/,
   )
   fixture.state.close()
@@ -446,12 +466,12 @@ test("a lane claimed by another dispatcher refuses dispatch and the watcher skip
   assert.ok(fixture.state.claimLane(fixture.worktree))
 
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /claimed by another dispatcher/,
   )
   assert.equal(fixture.aoe.sent.length, 0)
 
-  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state })
+  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state, validateCommit: async () => [] })
   const results = await coordinator.processLane(fixture.state.lane(fixture.worktree))
   assert.equal(results.length, 0)
   assert.equal(fixture.aoe.sent.length, 0)
@@ -465,7 +485,7 @@ test("a dispatch claim is released so the lane can be claimed again", async () =
     "inbox/response.md",
     `id: fix-r1-response\ntype: implementation-response\nworkflow_id: fix\nround: 1\nhead_commit: abc123`,
   )
-  const result = await resumeLane({
+  const result = await resumeLane({ validateCommit: async () => [],
     aoe: fixture.aoe,
     state: fixture.state,
     worktreePath: fixture.worktree,
@@ -513,14 +533,14 @@ test("a second dispatcher cannot send while the first is still mid-send", async 
     fixture.aoe.sent.push({ sessionId, message })
     await sendGate
   }
-  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state })
+  const coordinator = new ReviewLoopCoordinator({ aoe: fixture.aoe, state: fixture.state, validateCommit: async () => [] })
   const aDispatch = coordinator.processLane(fixture.state.lane(fixture.worktree))
   await waitUntil(() => fixture.aoe.sent.length === 1)
 
   const bResult = await coordinator.processLane(fixture.state.lane(fixture.worktree))
   assert.equal(bResult.length, 0)
   await assert.rejects(
-    resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
+    resumeLane({ validateCommit: async () => [], aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true }),
     /claimed by another dispatcher/,
   )
   assert.equal(fixture.aoe.sent.length, 1)

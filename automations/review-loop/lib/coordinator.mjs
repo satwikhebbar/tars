@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { isWorkflowHandoff, isWorkflowHandoffCandidate, readHandoff, validateWorkflowHandoff } from "./handoff.mjs"
 import { markedDispatch } from "./investigation-dispatch.mjs"
 import { PR_FEEDBACK_INTERVAL_MS, readPrFeedback, snapshotPrFeedback } from "./pr-feedback.mjs"
+import { validateHandoffCommit } from "./handoff-publish.mjs"
 
 const HANDOFF_DIRECTORIES = ["inbox", "done"]
 export const ACTIVE_STATES = new Set(["idle", "waiting"])
@@ -30,9 +31,10 @@ export function startClaimRenewal(renew, intervalMs = CLAIM_RENEW_MS) {
 
 /** Coordinates one persisted author/reviewer pair per worktree through durable handoff files. */
 export class ReviewLoopCoordinator {
-  constructor({ aoe, state, pollPrFeedback = false }) {
+  constructor({ aoe, state, pollPrFeedback = false, validateCommit = validateHandoffCommit }) {
     this.aoe = aoe
     this.state = state
+    this.validateCommit = validateCommit
     this.pollPrFeedback = pollPrFeedback
     this.nextPrFeedbackPoll = new Map()
   }
@@ -72,7 +74,17 @@ export class ReviewLoopCoordinator {
       .filter(({ event }) => !isSupersededApprovedImplementation(lane, event, events, (key) => this.state.hasDispatched(lane.worktreePath, key)))
       .map(({ handoff }) => ({ handoff, errors: validateWorkflowHandoff(handoff, { requiresReopen: activeLaneState(lane) === "approved" }) }))
       .filter((invalid) => invalid.errors.length)
-    const invalid = invalidHandoffs[0] ?? contextualInvalidHandoffs[0]
+    let invalidCommit
+    for (const event of events) {
+      if (this.state.hasDispatched(lane.worktreePath, event.key) || !matchesCurrentIteration(lane, event)) continue
+      if (activeLaneState(lane) === "approved" && !event.reopensLane) continue
+      const errors = await this.validateCommit(event.handoff, lane.worktreePath)
+      if (errors.length) {
+        invalidCommit = { handoff: event.handoff, errors }
+        break
+      }
+    }
+    const invalid = invalidHandoffs[0] ?? contextualInvalidHandoffs[0] ?? invalidCommit
     if (invalid) {
       if (lane.state !== "invalid_handoff") {
         this.state.saveLane({
@@ -444,7 +456,7 @@ function promptFor(lane, event) {
   const feedbackInstructions = existingPrFeedback
     ? "Preserve the address-pr-feedback thread checklist. Keep reopen: true in the implementation-response because this lane is addressing feedback on an existing approved pull request."
     : "This is a scheduled pre-PR iteration. Do not include reopen: true or an address-pr-feedback thread checklist in the implementation-response; no pull request exists yet."
-  return `Review-loop: read reviewer handoff ${path} and address its requested changes for iteration ${event.iteration}. Validate and commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}, and head_commit. ${feedbackInstructions} Do not reply to original PR comments addressed by these code changes or push yet; TARS will send the commit through reviewer review and authorize the push after approval. Do not request a manual handoff.`
+  return `Review-loop: read reviewer handoff ${path} and address its requested changes for iteration ${event.iteration}. Validate and commit the result, then write one implementation-response handoff with workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round + 1}, iteration ${event.iteration}. Draft the implementation-response outside .agent-handoff/, omit head_commit, then run tars handoff publish --file <draft-path> from this worktree; TARS inserts Git HEAD and publishes atomically. ${feedbackInstructions} Do not reply to original PR comments addressed by these code changes or push yet; TARS will send the commit through reviewer review and authorize the push after approval. Do not request a manual handoff.`
 }
 
 function authorPrompt(lane, event) {
@@ -480,5 +492,5 @@ function hasNextIteration(lane, event) {
 }
 
 function iterationPrompt(lane, workflowId, planVerdictPath, iteration, round) {
-  return `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}, and head_commit. Before publishing, run tars handoff validate --path <handoff-path>; correct every reported error. Do not start a later iteration, push, or create a pull request yet.`
+  return `Continue the approved TARS plan. Read ${planVerdictPath} and implement iteration ${iteration} of ${lane.iterationCount} only. Keep the branch buildable and verified. When this iteration is committed and verified, publish an implementation-response with created_by: author, workflow_id ${workflowId}, round ${round}, iteration ${iteration}. Draft it outside .agent-handoff/ and omit head_commit, then run tars handoff publish --file <draft-path> from this worktree; TARS inserts Git HEAD, validates, and publishes atomically. Do not start a later iteration, push, or create a pull request yet.`
 }

@@ -8,6 +8,7 @@ import { promisify } from "node:util"
 import { groupForWorktree } from "../lib/aoe.mjs"
 import { openCodeServerConfig } from "../lib/investigation-capture.mjs"
 import { assertLaneModels } from "../lib/models.mjs"
+import { StateStore } from "../lib/state.mjs"
 import { closeLane, issueOpeningPrompt, prepareTrashedWorktreeGitPointer, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane as startLaneImpl, worktreeForIssue } from "../lib/lane.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -228,6 +229,16 @@ test("starts one implementation session and one reviewer in its AoE worktree", a
   assert.match(aoe.sent[0].message, /do not ask the user to choose a planning workflow/)
   assert.equal(state.entries[0].codexSessionId, "codex-44")
   assert.equal(state.entries[0].phase, "building")
+})
+
+test("new lanes persist their issue identity independently of branch and worktree names", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-lane-issue-"))
+  const state = new StateStore(join(directory, "state.sqlite"))
+  await state.open()
+  t.after(async () => { state.close(); await rm(directory, { recursive: true, force: true }) })
+  const issue = { number: 44, title: "Calendar export", url: "https://github.com/owner/repo/issues/44" }
+  const result = await startLane({ aoe: new FakeAoe(), state, repoPath: "/repo", issue, branch: "custom-branch", worktreeName: "custom-worktree", maxRounds: 5, openingPrompt: "Build" })
+  assert.equal(state.lanesForIssue(issue.url)[0].worktreePath, result.worktreePath)
 })
 
 test("provisions and validates the worktree before starting either agent", async () => {

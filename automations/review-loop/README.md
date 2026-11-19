@@ -39,9 +39,10 @@ Refresh an existing CLI installation with `node setup.mjs provision`, then
 restart the shared watcher with `tars watch`. It checks approved
 lanes every 15 minutes for an open, non-draft PR on the worktree branch. Keep
 the AoE author session running and authenticate `gh` for the repository.
+Watcher logs include the local date, time, and UTC offset.
 
 The watcher picks up unresolved inline threads opened in a submitted review
-by a GitHub user with push access. The first poll can pick up existing threads.
+by a person or bot with push access. The first poll can pick up existing threads.
 Draft or dismissed reviews, standalone replies, and reviews with only a
 summary are outside this trigger. The manual `address-pr-feedback` workflow
 remains available for those cases.
@@ -69,6 +70,17 @@ tars lane start \
 ```
 
 The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup. `--plan-model <provider/model>` is available only when OpenCode is the author.
+
+`--issue` requires an existing, open GitHub issue number. Although `gh issue view` also
+accepts pull requests, TARS rejects PR URLs and mismatched issue numbers before
+running the classifier or creating a lane. To continue an existing PR, use the
+lane for its linked issue instead of passing the PR number to `lane start`.
+TARS also rejects a second registered lane for the same repository and issue,
+even with a different branch/worktree name. A stopped, blocked, or approved lane
+keeps ownership until retired with `lane close`. Issue identity is persisted
+for new lanes; older `issue-<number>-…` worktrees are matched using their Git
+origin remote. Concurrent kickoffs for the same issue are serialized in the
+shared TARS state database.
 
 Preflight runs through the selected author harness in a temporary directory.
 For every harness, the classifier uses `--classifier-model`, then
@@ -301,7 +313,8 @@ requested change stays in the current iteration. Only approval of the final
 iteration invokes the normal push-and-create-PR handoff. Direct Build lanes
 remain a single iteration without extra plan-review steps.
 
-OpenCode writes an `implementation-response` after committing:
+After committing and verifying code, the author writes an
+`implementation-response` draft outside `.agent-handoff/`, omitting the SHA:
 
 ```yaml
 id: calendar-fix-r2-response
@@ -309,8 +322,20 @@ type: implementation-response
 workflow_id: calendar-fix
 round: 2
 iteration: 1
-head_commit: 0123abc
 ```
+
+Run `tars handoff publish --file <draft-path>` from the lane worktree (or pass
+`--worktree <path>`). TARS obtains the full commit SHA directly from Git HEAD,
+inserts `head_commit`, validates the metadata, and publishes the complete file
+atomically as `.agent-handoff/inbox/<id>.md`. Existing files are never replaced;
+use a new handoff id for the next response. The draft's other fields and body
+are preserved. Any supplied `head_commit` is replaced by the Git value.
+
+Both `tars handoff validate --path <file>` (run in the lane worktree) and the
+coordinator check that implementation references are full SHAs naming available
+commit objects. Invalid references enter `invalid_handoff` before review is
+dispatched; correcting the handoff allows the coordinator to continue. Already
+dispatched history is retained without revalidation or substitution with HEAD.
 
 Codex writes a `code-review` handoff:
 

@@ -229,7 +229,7 @@ test("CLI classifier precedence is explicit override, configured classifier, res
   const config = join(f.directory, "config.json")
   for (const [name, script] of [
     ["aoe", 'if (process.argv[2] === "agents") console.log("✓ opencode installed"); else { console.error("STOP before worktree creation"); process.exit(1); }'],
-    ["gh", 'console.log(JSON.stringify({number:100,title:"Test isolated classification",body:"Implement a small fix",url:"https://example.test/issues/100",labels:[]}));'],
+    ["gh", 'console.log(JSON.stringify({number:100,state:"OPEN",title:"Test isolated classification",body:"Implement a small fix",url:"https://example.test/issues/100",labels:[]}));'],
   ]) {
     const command = join(f.directory, name)
     await writeFile(command, `#!${process.execPath}\n${script}\n`)

@@ -53,7 +53,18 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
   if (lane.state === "invalid_handoff") {
     return finish("blocked", "lane holds an invalid handoff; remove or fix it in the queue before resuming")
   }
-  if (lane.state === "blocked") return finish("blocked", "lane state is blocked")
+  if (lane.state === "blocked") {
+    const blocker = events.findLast((event) => event.outcome === "blocked" && dispatched.has(event.key))
+    if (blocker) {
+      return finish("blocked", `reviewer reported a blocker in ${blocker.handoff.path}; resolve that blocker, then explicitly unblock with lane set-max-rounds --resume (include the desired limits)`)
+    }
+    const limited = events.find((event) => !dispatched.has(event.key) && matchesCurrentIteration(lane, event) && laneLimitViolation(lane, event))
+    if (limited) {
+      const limit = laneLimitViolation(lane, limited)
+      return finish("blocked", `${limited.key} exceeds ${limit === "review_budget" ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})` : `max_rounds ${lane.maxRounds}`}; raise that limit with lane set-max-rounds --resume`)
+    }
+    return finish("blocked", "lane state is blocked; changing limits alone does not clear it: use lane set-max-rounds --resume after resolving the blocker")
+  }
   if (
     lane.state === "approved" &&
     !events.some(
@@ -125,6 +136,8 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
   const unconfirmed = events.filter(
     (event) =>
       dispatched.has(event.key) &&
+      // Terminal blockers are recorded decisions, not prompts awaiting an agent.
+      event.outcome !== "blocked" &&
       matchesCurrentIteration(lane, event) &&
       !laneLimitViolation(lane, event, { alreadyConsumed: true }) &&
       !hasAdvancement(allHandoffs, event),
@@ -194,7 +207,7 @@ function pendingVerdict(analysis, lane, event, session, dispatched) {
  * or `createSessions` is set, and each flag enables exactly one recovery action
  * only when the evidence supports it.
  */
-export async function resumeLane({ aoe, state, worktreePath, dispatch = false, createSessions = false, captureRuntime }) {
+export async function resumeLane({ aoe, state, worktreePath, dispatch = false, createSessions = false, captureRuntime, validateCommit }) {
   let analysis = await analyzeLane({ aoe, state, worktreePath })
 
   if (createSessions) {
@@ -228,7 +241,7 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
     if (analysis.verdict === "stale_delivery") {
       state.clearDispatched(worktreePath, analysis.nextEvent.key)
     }
-    const coordinator = new ReviewLoopCoordinator({ aoe, state })
+    const coordinator = new ReviewLoopCoordinator({ aoe, state, validateCommit })
     const results = await coordinator.dispatchLane(state.lane(worktreePath))
     if (!results.length) {
       throw new Error(

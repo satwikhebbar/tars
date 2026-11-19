@@ -67,6 +67,10 @@ export class StateStore {
         claimed_at TEXT NOT NULL,
         token TEXT NOT NULL DEFAULT ''
       );
+      CREATE TABLE IF NOT EXISTS lane_issues (
+        worktree_path TEXT PRIMARY KEY,
+        issue_url TEXT NOT NULL
+      );
     `)
     for (const column of ["dispatch_id TEXT", "boundary_kind TEXT NOT NULL DEFAULT 'prompt'", "destination_role TEXT"]) {
       try { this.database.exec(`ALTER TABLE dispatched_events ADD COLUMN ${column}`) }
@@ -207,7 +211,20 @@ export class StateStore {
   }
 
   deleteLane(worktreePath) {
+    this.database.prepare("DELETE FROM lane_issues WHERE worktree_path = ?").run(worktreePath)
     this.database.prepare("DELETE FROM lanes WHERE worktree_path = ?").run(worktreePath)
+  }
+
+  bindLaneIssue(worktreePath, issueUrl) {
+    this.database.prepare("INSERT INTO lane_issues (worktree_path, issue_url) VALUES (?, ?) ON CONFLICT(worktree_path) DO UPDATE SET issue_url = excluded.issue_url").run(worktreePath, issueUrl)
+  }
+
+  lanesForIssue(issueUrl) {
+    return this.database.prepare("SELECT lanes.* FROM lanes JOIN lane_issues USING (worktree_path) WHERE issue_url = ?").all(issueUrl).map(toLane)
+  }
+
+  laneIssue(worktreePath) {
+    return this.database.prepare("SELECT issue_url FROM lane_issues WHERE worktree_path = ?").get(worktreePath)?.issue_url
   }
 
   hasDispatched(worktreePath, eventKey) {

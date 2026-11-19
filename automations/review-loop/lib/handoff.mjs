@@ -33,7 +33,7 @@ export function parseFrontmatter(source) {
       listKey = key
       continue
     }
-    metadata[key] = parseScalar(rawValue)
+    metadata[key] = parseScalar(rawValue, key === "head_commit")
     listKey = null
   }
   return metadata
@@ -73,8 +73,12 @@ export function validateWorkflowHandoff(handoff, { requiresReopen = false } = {}
   return errors
 }
 
-function parseScalar(value) {
+function parseScalar(value, stringOnly = false) {
   const trimmed = value.trim()
+  if (stringOnly) {
+    const quoted = trimmed.match(/^(["'])(.*)\1$/)
+    return quoted ? quoted[2] : trimmed
+  }
   if (/^\d+$/.test(trimmed)) return Number(trimmed)
   if (trimmed === "true") return true
   if (trimmed === "false") return false

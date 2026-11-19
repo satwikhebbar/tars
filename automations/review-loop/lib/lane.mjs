@@ -7,6 +7,7 @@ import { groupForWorktree } from "./aoe.mjs"
 import { captureLaunchCommand, createOpenCodeEvidence, ensureOpenCodeServer, openCodeAttachCommand, prepareCapture, stopOpenCodeServer } from "./investigation-capture.mjs"
 import { markedDispatch } from "./investigation-dispatch.mjs"
 import { assertLaneModels } from "./models.mjs"
+import { issueKey } from "./issue-lanes.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -144,6 +145,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
       authorEvidence: capture?.roles.author ?? null,
       reviewerEvidence: capture?.roles.reviewer ?? null,
     })
+    if (issue.url) state.bindLaneIssue?.(worktreePath, issueKey(issue.url))
     registered = true
     const opening = capture ? markedDispatch(openingPrompt) : { message: openingPrompt, id: null }
     await aoe.send(author.id, opening.message)
@@ -447,7 +449,7 @@ async function assertStoppedDeadSessions(aoe, sessionIds) {
 }
 
 export function issueOpeningPrompt(issue, workflowId = randomUUID()) {
-  return `You are the author for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nThis lane is direct-build: begin implementation now. Its next durable artifact is an implementation-response handoff; do not ask the user to choose a planning workflow or create a plan artifact. Use workflow_id: ${workflowId} and round: 1 in your first handoff; preserve the workflow_id and increment round in later handoffs. Do not include iteration for this direct-build lane. Use the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and publish the first implementation-response with created_by: author.`
+  return `You are the author for GitHub issue #${issue.number}: ${issue.title}\n${issue.url ? `\n${issue.url}\n` : ""}\nThis lane is direct-build: begin implementation now. Its next durable artifact is an implementation-response handoff; do not ask the user to choose a planning workflow or create a plan artifact. Use workflow_id: ${workflowId} and round: 1 in your first handoff; preserve the workflow_id and increment round in later handoffs. Do not include iteration for this direct-build lane. Use the issue-kickoff skill to initialize this already-created AoE worktree, then continue its workflow. Do not create, move, or rename a worktree or branch. When implementation is ready, follow handoff-review to commit, verify, and draft the first implementation-response with created_by: author outside .agent-handoff/ and omit head_commit; run tars handoff publish --file <draft-path> from this worktree to insert Git HEAD and publish atomically.`
 }
 
 export function planOpeningPrompt(issue, workflowId = randomUUID()) {

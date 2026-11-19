@@ -493,7 +493,7 @@ async function laneFixture({ maxRounds = 5, authorHarness = "opencode", reviewer
     phase: "planning",
   })
   const aoe = new FakeAoe()
-  return { worktree, state, aoe, coordinator: new ReviewLoopCoordinator({ aoe, state }) }
+  return { worktree, state, aoe, coordinator: new ReviewLoopCoordinator({ aoe, state, validateCommit: async () => [] }) }
 }
 
 async function writeWorkflowHandoff(worktree, relativePath, frontmatter) {

@@ -10,10 +10,13 @@ import { AoeClient, createPair, discoverPair, findActiveWorktreeSession, validat
 import { assertHarnessAvailable, loadHarnessConfig, loadLaneConfig, provisionConfiguredWorktreeFiles, provisionWorktreeHarnessRequirements, resolveHarness, resolveHarnessModel } from "./lib/harnesses.mjs"
 import { ReviewLoopCoordinator } from "./lib/coordinator.mjs"
 import { readHandoff, validateWorkflowHandoff } from "./lib/handoff.mjs"
+import { publishHandoff, validateHandoffCommit } from "./lib/handoff-publish.mjs"
 import { closeLane, issueOpeningPrompt, planOpeningPrompt, recoverLane, registerLane, setLaneLimits, startExistingLane, startLane, worktreeForIssue } from "./lib/lane.mjs"
 import { chooseLanePreflight, fallbackLanePreflight } from "./lib/namer.mjs"
 import { prepareHarnessPreflight } from "./lib/preflight.mjs"
 import { assertLaneModels } from "./lib/models.mjs"
+import { readIssue } from "./lib/github.mjs"
+import { withIssueLane } from "./lib/issue-lanes.mjs"
 import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
@@ -27,6 +30,10 @@ import { readReportFile, validateInvestigationReport, renderInvestigationReport 
 
 const DEFAULT_INTERVAL_MS = 2_000
 const DEFAULT_MAX_ROUNDS = 5
+const watchTimeFormat = new Intl.DateTimeFormat("sv-SE", {
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "shortOffset",
+})
 const execFileAsync = promisify(execFile)
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 
@@ -101,6 +108,12 @@ async function main() {
     printUsage()
     return
   }
+  if (command === "handoff" && positionals[1] === "publish") {
+    if (!values.file) throw new Error("handoff publish requires --file <draft-path>")
+    const result = await publishHandoff({ draftPath: values.file, worktreePath: values.worktree ?? process.cwd() })
+    console.log(`published: ${result.path}\nhead_commit: ${result.headCommit}`)
+    return
+  }
   if (command === "lane" && positionals[1] === "investigate" && positionals[2]) {
     if (positionals[2] !== "validate-report") throw new Error("Unknown investigation command.")
     await validateAnalystFile(values)
@@ -115,8 +128,8 @@ async function main() {
     return
   }
   const state = new StateStore(values.state ?? defaultStatePath())
-  await state.open()
   try {
+    await state.open()
     if (command === "start") await start({ values, state, config: await loadHarnessConfig(values.config) })
     else if (command === "watch") await watch({ values, state })
     else if (command === "lane" && positionals[1] === "register") await register({ values, state, config: await loadHarnessConfig(values.config) })
@@ -130,6 +143,10 @@ async function main() {
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
     else if (command === "status") printStatus(state)
     else printUsage()
+  } catch (error) {
+    if (command !== "watch") throw error
+    logWatchError(error)
+    process.exitCode = 1
   } finally {
     state.close()
   }
@@ -158,7 +175,7 @@ async function watch({ values, state, aoe = new AoeClient() }) {
   const interval = positiveInteger(values.interval, DEFAULT_INTERVAL_MS, "--interval")
   const processOnce = async () => {
     const results = await coordinator.processAll()
-    for (const result of results) console.log(`${result.action}: ${result.id ?? result.event.handoff.metadata.id}`)
+    for (const result of results) console.log(watchLogLine(`${result.action}: ${result.id ?? result.event.handoff.metadata.id}`))
   }
   await processOnce()
   if (values.once) return
@@ -201,50 +218,51 @@ async function launch({ values, state }) {
   let planningReason = null
   const explicitPlanning = values.planning === "always" || values.planning === "never"
   const classifier = !explicitPlanning ? await prepareHarnessPreflight(roles.author, { model: classifierModel }) : null
-  let issue, fallback, preflight
   try {
-    issue = await readIssue(repoPath, issueNumber)
-    fallback = fallbackLanePreflight(issue)
-    preflight = explicitPlanning ? fallback : await chooseLanePreflight(issue, classifier.run, {
-      onFallback: (error) => { planningReason = summarizePreflightError(error) },
-    })
+    const issue = await readIssue(repoPath, issueNumber)
+    await withIssueLane({ state, issue, run: async () => {
+      const fallback = fallbackLanePreflight(issue)
+      const preflight = explicitPlanning ? fallback : await chooseLanePreflight(issue, classifier.run, {
+        onFallback: (error) => { planningReason = summarizePreflightError(error) },
+      })
+      const planning = resolvePlanning(values.planning, preflight.planning)
+      const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
+      console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
+      const planModel = values["plan-model"] ?? (planning === "required" ? configuredPlanModel : undefined)
+      const names = values.branch
+        ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
+        : preflight
+      const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
+      const workflowId = randomUUID()
+      const openingPrompt = values.prompt
+        ? `${values.prompt}\n\nTARS workflow metadata for the first handoff: workflow_id ${workflowId}, round 1.`
+        : planning === "required"
+          ? planOpeningPrompt(issue, workflowId)
+          : issueOpeningPrompt(issue, workflowId)
+      const lane = await startLane({
+        aoe: laneAoe(new AoeClient()),
+        state,
+        repoPath,
+        issue,
+        branch: names.branch,
+        worktreeName: values["worktree-name"] ?? names.worktreeName,
+        maxRounds,
+        planning,
+        planningSource,
+        planningReason,
+        authorModel, reviewerModel, planModel, roles,
+        investigationCapture,
+        provision: async (worktreePath) => {
+          await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
+          await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
+        },
+        openingPrompt,
+      })
+      console.log(`started: ${lane.worktreePath}\t${lane.authorSessionId}\t${lane.reviewerSessionId}\t${names.branch}`)
+    } })
   } finally {
     await classifier?.dispose()
   }
-  const planning = resolvePlanning(values.planning, preflight.planning)
-  const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
-  console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
-  const planModel = values["plan-model"] ?? (planning === "required" ? configuredPlanModel : undefined)
-  const names = values.branch
-    ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
-    : preflight
-  const maxRounds = positiveInteger(values["max-rounds"], DEFAULT_MAX_ROUNDS, "--max-rounds")
-  const workflowId = randomUUID()
-  const openingPrompt = values.prompt
-    ? `${values.prompt}\n\nTARS workflow metadata for the first handoff: workflow_id ${workflowId}, round 1.`
-    : planning === "required"
-      ? planOpeningPrompt(issue, workflowId)
-      : issueOpeningPrompt(issue, workflowId)
-  const lane = await startLane({
-    aoe: laneAoe(new AoeClient()),
-    state,
-    repoPath,
-    issue,
-    branch: names.branch,
-    worktreeName: values["worktree-name"] ?? names.worktreeName,
-    maxRounds,
-    planning,
-    planningSource,
-    planningReason,
-    authorModel, reviewerModel, planModel, roles,
-    investigationCapture,
-    provision: async (worktreePath) => {
-      await Promise.all([provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.author, worktreePath }), provisionWorktreeHarnessRequirements({ root: ROOT, harness: roles.reviewer, worktreePath })])
-      await provisionConfiguredWorktreeFiles({ config, repoPath, worktreePath })
-    },
-    openingPrompt,
-  })
-  console.log(`started: ${lane.worktreePath}\t${lane.authorSessionId}\t${lane.reviewerSessionId}\t${names.branch}`)
 }
 
 async function close({ values, state }) {
@@ -390,6 +408,7 @@ async function validateHandoff({ values }) {
   if (!values.path) throw new Error("handoff validate requires --path <path>")
   const handoff = await readHandoff(values.path)
   const errors = validateWorkflowHandoff(handoff)
+  if (!errors.length) errors.push(...await validateHandoffCommit(handoff, values.worktree ?? process.cwd()))
   if (errors.length) throw new Error(`Invalid handoff ${values.path}: ${errors.join(", ")}`)
   console.log(`valid: ${values.path}`)
 }
@@ -446,10 +465,18 @@ function positiveInteger(value, fallback, name) {
   return parsed
 }
 
+function watchLogLine(message) {
+  return `[${watchTimeFormat.format(new Date())}] ${message}`
+}
+
+function logWatchError(error) {
+  console.error(watchLogLine(error instanceof Error ? error.message : error))
+}
+
 async function waitForInterrupt(tick, interval) {
   await new Promise((resolve) => {
     const timer = setInterval(() => {
-      void tick().catch((error) => console.error(error instanceof Error ? error.message : error))
+      void tick().catch(logWatchError)
     }, interval)
     process.once("SIGINT", () => {
       clearInterval(timer)
@@ -463,6 +490,7 @@ function printUsage() {
   tars start --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions] [--once]
   tars watch [--once]
   tars handoff validate --path <handoff-file>
+  tars handoff publish --file <draft-path> [--worktree <path>]
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
   tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--classifier-model <model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
@@ -544,17 +572,6 @@ function summarizePreflightError(error) {
 async function findWorktreeSession(client, repoPath, branch, tool) {
   return findActiveWorktreeSession(await client.listSessions(), repoPath, branch, tool)
 }
-
-async function readIssue(repoPath, issueNumber) {
-  const { stdout } = await execFileAsync(
-    "gh",
-    ["issue", "view", String(issueNumber), "--json", "number,title,body,labels,url"],
-    { cwd: repoPath },
-  )
-  const result = JSON.parse(stdout)
-  return { ...result, labels: result.labels.map((label) => label.name) }
-}
-
 
 await main().catch((error) => {
   console.error(error instanceof Error ? error.message : error)

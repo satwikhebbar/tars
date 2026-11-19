@@ -20,7 +20,9 @@ changes to the pull request.
    is complete.
 3. If any accepted feedback calls for code changes, make and verify them, commit
    them, then publish an `implementation-response` with `created_by: author`,
-   `reopen: true`, and the immutable `head_commit`. Do not reply to comments
+   `reopen: true`. Draft outside `.agent-handoff/`, omit `head_commit`, and run
+   `tars handoff publish --file <draft-path>` from this lane to insert Git HEAD
+   and publish atomically. Do not reply to comments
    addressed by these code changes yet; first submit the commit through the
    TARS reviewer handoff. If all feedback is response only or declined, finish
    after replying to those threads; do not create an empty commit or handoff.
