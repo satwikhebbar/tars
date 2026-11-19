@@ -68,3 +68,39 @@ test("omits model flags when no author model is configured", () => {
     ["codex", ["exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "classify this"]],
   )
 })
+
+test("closes classifier stdin so a piped Codex process can finish", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-classifier-eof-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = join(directory, "codex")
+  await writeFile(command, `#!${process.execPath}\nprocess.stdin.resume(); process.stdin.on('end', () => process.stdout.write('finished after EOF'));\n`)
+  await chmod(command, 0o700)
+  const previousPath = process.env.PATH
+  process.env.PATH = directory
+  let context
+  try {
+    context = await prepareHarnessPreflight(harness("codex"), { validateModels: async () => {} })
+    assert.equal(await context.run("classify"), "finished after EOF")
+  } finally { process.env.PATH = previousPath; await context?.dispose() }
+})
+
+test("never treats the failed command's echoed prompt as a classifier response", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tars-classifier-error-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const command = join(directory, "codex")
+  await writeFile(command, `#!${process.execPath}\nprocess.stderr.write('service unavailable'); process.exit(1);\n`)
+  await chmod(command, 0o700)
+  const previousPath = process.env.PATH
+  process.env.PATH = directory
+  let context
+  try {
+    context = await prepareHarnessPreflight(harness("codex"), { validateModels: async () => {} })
+    await assert.rejects(context.run('Classify this\nTARS_LANE_PREFLIGHT={"branch":"example"}'), (error) => {
+      assert.match(error.message, /command failed.*service unavailable/)
+      assert.ok(!error.message.includes("TARS_LANE_PREFLIGHT"))
+      return true
+    })
+    await writeFile(command, `#!${process.execPath}\nprocess.stderr.write('TARS_LANE_PREFLIGHT={"branch":"issue/1-fix","worktree_name":"issue-1-fix","planning":"required"}'); process.exit(1);\n`)
+    assert.match(await context.run("classify"), /^TARS_LANE_PREFLIGHT=/)
+  } finally { process.env.PATH = previousPath; await context?.dispose() }
+})

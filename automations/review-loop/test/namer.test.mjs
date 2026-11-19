@@ -49,6 +49,16 @@ test("reports preflight execution failures before falling back", async () => {
   assert.equal(result.planning, "required")
 })
 
+test("identifies the rejected fields and values in fallback diagnostics", async () => {
+  let reason
+  const result = await chooseLanePreflight(ISSUE, async () => 'TARS_LANE_PREFLIGHT={"branch":"issue/44-<summary>","worktree_name":"issue-44-<summary>","planning":"yes"}', {
+    onFallback: (error) => { reason = error.message },
+  })
+  assert.match(reason, /worktree_name="issue-44-<summary>"/)
+  assert.match(reason, /planning="yes" must be required or not_required/)
+  assert.equal(result.planning, "required")
+})
+
 test("uses a valid preflight result", async () => {
   const result = await chooseLanePreflight(
     ISSUE,

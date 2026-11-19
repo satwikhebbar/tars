@@ -22,16 +22,12 @@ export function parsePreflightDirective(output) {
     .map((line) => extractDirectiveJson(line.trim().slice(DIRECTIVE.length)))
   if (directives.length !== 1) throw new Error("Expected exactly one TARS_LANE_PREFLIGHT directive.")
   const value = JSON.parse(directives[0])
-  if (
-    !value ||
-    typeof value.branch !== "string" ||
-    typeof value.worktree_name !== "string" ||
-    !["required", "not_required"].includes(value.planning) ||
-    !isSafeBranch(value.branch) ||
-    !isSafeWorktreeName(value.worktree_name)
-  ) {
-    throw new Error("Preflight returned invalid lane settings.")
-  }
+  const errors = []
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Preflight returned invalid lane settings: expected a JSON object.")
+  if (typeof value.branch !== "string" || !isSafeBranch(value.branch)) errors.push(`branch=${JSON.stringify(value.branch) ?? "missing"} must be a safe lowercase Git branch name`)
+  if (typeof value.worktree_name !== "string" || !isSafeWorktreeName(value.worktree_name)) errors.push(`worktree_name=${JSON.stringify(value.worktree_name) ?? "missing"} must contain lowercase letters, digits, or hyphens, with alphanumeric ends`)
+  if (!["required", "not_required"].includes(value.planning)) errors.push(`planning=${JSON.stringify(value.planning) ?? "missing"} must be required or not_required`)
+  if (errors.length) throw new Error(`Preflight returned invalid lane settings: ${errors.join("; ")}.`)
   return { branch: value.branch, worktreeName: value.worktree_name, planning: value.planning }
 }
 

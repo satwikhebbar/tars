@@ -34,18 +34,22 @@ async function executePreflight(harness, directory, prompt, model) {
   const entry = preflightCommand(harness, directory, prompt, model)
   if (!entry) throw new Error(`${harness.displayName} has no TARS preflight adapter`)
   try {
-    const { stdout } = await execFileAsync(entry[0], entry[1], { cwd: directory, timeout: 60_000, maxBuffer: 1_000_000 })
+    const execution = execFileAsync(entry[0], entry[1], { cwd: directory, timeout: 60_000, maxBuffer: 1_000_000 })
+    // The entire prompt is an argument. Codex exec also reads piped stdin and
+    // waits for EOF; execFile leaves that pipe open unless explicitly closed.
+    execution.child.stdin.end()
+    const { stdout } = await execution
     return stdout
   } catch (error) {
     // Some harness versions write a usable answer to stderr before exiting
     // nonzero. Let the strict directive parser decide whether that output is
     // safe to accept; preserve genuine command failures otherwise.
-    const message = error.message?.startsWith("Command failed:") && error.message.includes("\n")
-      ? error.message.slice(error.message.indexOf("\n") + 1)
-      : error.message
-    const output = [error.stdout, error.stderr, message].filter(Boolean).join("\n")
+    // error.message includes the command arguments, including the prompt's
+    // example directive. Only actual child output can contain an answer.
+    const output = [error.stdout, error.stderr].filter(Boolean).join("\n")
     if (output.includes("TARS") && output.includes("PREFLIGHT")) return output
-    throw error
+    const detail = error.killed ? "timed out or exceeded the output limit" : error.code ? `command failed (${error.code})` : "command failed"
+    throw new Error(`${harness.displayName} preflight ${detail}${output.trim() ? `: ${output.trim()}` : ""}`, { cause: error })
   }
 }
 
