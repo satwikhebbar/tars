@@ -17,7 +17,7 @@ import { prepareHarnessPreflight } from "./lib/preflight.mjs"
 import { assertLaneModels } from "./lib/models.mjs"
 import { readIssue } from "./lib/github.mjs"
 import { withIssueLane } from "./lib/issue-lanes.mjs"
-import { formatAnalysis, resumeLane } from "./lib/recovery.mjs"
+import { analyzeLane, formatAnalysis, resumeLane } from "./lib/recovery.mjs"
 import { StateStore } from "./lib/state.mjs"
 import { assertCaptureSupported } from "./lib/investigation-capture.mjs"
 import { assertQuiet } from "./lib/investigation-evidence.mjs"
@@ -138,6 +138,7 @@ async function main() {
     else if (command === "lane" && positionals[1] === "set-max-rounds") await setMaxRounds({ values, state })
     else if (command === "lane" && positionals[1] === "recover") await recover({ values, state })
     else if (command === "lane" && positionals[1] === "resume") await resume({ values, state })
+    else if (command === "lane" && positionals[1] === "diagnose") await resume({ values, state, diagnose: true })
     else if (command === "lane" && positionals[1] === "evidence") await evidence({ values, state })
     else if (command === "lane" && positionals[1] === "investigate") await investigateLane({ values, state })
     else if (command === "handoff" && positionals[1] === "validate") await validateHandoff({ values })
@@ -420,18 +421,24 @@ function explicitPair(values) {
   return null
 }
 
-async function resume({ values, state }) {
+async function resume({ values, state, diagnose = false }) {
   if (values.worktree && values.issue) throw new Error("Specify either --worktree <path> or --issue <number>, not both.")
   if (!values.worktree && !values.issue) throw new Error("lane resume requires --worktree <path> or --issue <number>")
   const worktreePath = values.worktree
     ? await realpath(values.worktree)
     : worktreeForIssue(state, positiveInteger(values.issue, undefined, "--issue"))
+  if (diagnose) {
+    if (values.dispatch || values["create-sessions"]) throw new Error("lane diagnose is read-only; use lane resume for recovery")
+    console.log(formatAnalysis(await analyzeLane({ aoe: new AoeClient(), state, worktreePath })))
+    return
+  }
   const result = await resumeLane({
     // Pass the raw client: processLane needs runningSessions(), which laneAoe() does not expose.
     aoe: new AoeClient(),
     state,
     worktreePath,
-    dispatch: values.dispatch,
+    dispatch: true,
+    unblock: true,
     createSessions: values["create-sessions"],
   })
   console.log(formatAnalysis(result.analysis))
@@ -498,6 +505,7 @@ function printUsage() {
   tars lane set-max-rounds (--worktree <path> | --issue <number>) [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
   tars lane resume (--worktree <path> | --issue <number>) [--dispatch] [--create-sessions]
+  tars lane diagnose (--worktree <path> | --issue <number>)
   tars lane evidence (--worktree <path> | --issue <number>) [--force]
   tars lane evidence overview --snapshot-id <id> [--cursor <cursor>]
   tars lane evidence list_events --snapshot-id <id> [--role author|reviewer] [--block-id <id>] [--event-type <type>] [--tool-name <name>] [--action <kind>] [--path <exact-path> | --path-under <directory>] [--query <exact-query>] [--min-visible-output-bytes <bytes>] [--from <time>] [--to <time>] [--cursor <cursor>]

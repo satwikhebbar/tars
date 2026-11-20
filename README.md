@@ -280,7 +280,11 @@ flowchart TD
 The reviewer uses an approved plan verdict to recommend the smallest sensible
 set of independently buildable and testable iterations. On approval the verdict
 also selects the implementation's review budget — either `review_budget` (an
-explicit total) or `review_budget_per_iteration` (allowance × `iteration_count`).
+explicit total including the PR reserve) or `review_budget_per_iteration`
+(an allowance multiplied by `iteration_count`, plus the PR reserve). TARS
+enforces a minimum allowance of three retries per iteration and protects three
+additional retries for PR feedback. A three-iteration plan therefore receives
+at least 12 retries: nine for implementation and three reserved for the PR.
 TARS persists it separately from the pre-approval `max_rounds` plan-review cap;
 only reviewer `changes_requested` cycles consume it, and the lane blocks with
 reason `review_budget` when it is exhausted. Raise it to recover:
@@ -316,8 +320,11 @@ tars lane close --issue 44
 # Abort only after both registered AoE panes have been stopped and are dead.
 tars lane close --issue 44 --force
 
-# Diagnose a stuck or interrupted lane from durable handoffs and session liveness (read-only).
+# Resume waiting work, including a stale block whose current limits allow progress.
 tars lane resume --issue 44
+
+# Inspect a stuck or interrupted lane without sending prompts.
+tars lane diagnose --issue 44
 ```
 
 See the [review-loop reference](automations/review-loop/README.md) for all

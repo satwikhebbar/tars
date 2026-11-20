@@ -243,47 +243,45 @@ across repositories.
 
 An interrupted watcher, a restarted machine, or a session that dies after a
 prompt is recorded can leave a lane with recorded-but-unprocessed deliveries or
-stale state. `lane resume` diagnoses a lane from durable evidence — handoff
-files, the persisted lane row, the dispatch journal, and AoE session liveness —
-and takes a recovery action only when the operator asks for it explicitly:
+stale state. `lane resume` resumes from durable handoffs, the dispatch journal,
+and session liveness. It sends the single pending action or retries a stale
+recorded delivery. If a saved block remains after limits were raised, it clears
+that stop under the dispatcher claim when one pending event is within limits
+and no unresolved reviewer blocker exists. Busy lanes are left running;
+exhausted budgets and reviewer blockers are explained without bypassing them.
 
 ```bash
 tars lane resume --worktree /absolute/path/to/worktree
-```
 
-Without action flags this is read-only: it prints a verdict and the single next
-pending action (or why none can be taken). It never sends prompts and never
-mutates state. Action flags each enable exactly one recovery action and are
-refused for any other verdict:
+# Inspect without sending prompts or changing the lane.
+tars lane diagnose --worktree /absolute/path/to/worktree
 
-```bash
-# Dispatch the single pending next action to its idle session.
-tars lane resume --worktree <path> --dispatch
-
-# Re-create a registered OpenCode/Codex session that no longer exists, then re-analyze.
+# Re-create a missing registered session, then continue.
 tars lane resume --worktree <path> --create-sessions
 ```
+
+`--dispatch` remains accepted for compatibility; resume dispatches by default.
 
 Verdicts:
 
 | Verdict | Meaning | Recovery |
 |---|---|---|
-| `needs_dispatch` | One actionable pending handoff; target session is idle/waiting. | `--dispatch` |
-| `stale_delivery` | A recorded delivery has no advancement, its session is idle, and it is older than 10 minutes — the prompt likely never took effect. | `--dispatch` (re-journals and re-dispatches once) |
+| `needs_dispatch` | One actionable pending handoff; target session is idle/waiting. | `lane resume` |
+| `stale_delivery` | A recorded delivery has no advancement, its session is idle, and it is older than 10 minutes — the prompt likely never took effect. | `lane resume` (re-journals and re-dispatches once) |
 | `in_flight` | Already progressing: target session is busy, or a recent delivery/compact transition is waiting. | none |
 | `no_action` | Nothing pending — delivery complete, or the lane is awaiting the agent's next handoff. | none |
 | `sessions_missing` | A registered session is absent from AoE, or its id no longer matches the lane's worktree and role. | `--create-sessions` |
 | `inactive_sessions` | A session is dead or has no runtime record. | none (stop/remove via AoE, then `--create-sessions`) |
 | `ambiguous` | Multiple pending events, multiple unconfirmed deliveries, or state contradicts the handoff evidence. All candidates are listed; nothing is guessed. | none |
-| `blocked` | Lane state is blocked, or an event exceeds `max_rounds` or the review budget. | none |
+| `blocked` | A saved stop, reviewer blocker, or exhausted limit prevents progress. | `lane resume` clears a stale stop when current limits permit; resolve reviewer blockers or raise exhausted limits first. |
 
-Dispatch goes through the same `dispatchLane` path as the watcher, so exactly
-one prompt is sent per `--dispatch`, the normal state transitions apply, and
+Dispatch goes through the same `dispatchLane` path as the watcher, so at most
+one prompt is sent per resume, the normal state transitions apply, and
 already-dispatched events are never re-sent unless the delivery is
 `stale_delivery` and the operator chose to retry it.
 
 A per-lane claim (in the state SQLite store) guarantees one dispatcher per lane:
-the watcher's `processLane` and `lane resume --dispatch` both take the claim
+the watcher's `processLane` and `lane resume` both take the claim
 before sending, and the stale-delivery path holds it across clearing the journal
 marker through the re-dispatch. Claims are ownership-aware leases: while a
 dispatch is active (including across an awaited prompt send) the holder renews
@@ -320,10 +318,19 @@ persisted per lane, so concurrent lanes progress independently.
 
 An approved plan verdict also contains an ordered `Implementation Iterations`
 schedule, an `iteration_count` frontmatter value, and the implementation's
-review budget in one of two forms: `review_budget` (an explicit total) or
-`review_budget_per_iteration` (an allowance per iteration; the total is
-allowance × `iteration_count`). TARS starts only iteration
-1. Each iteration must commit, publish an `implementation-response` with its
+review budget in one of two forms:
+
+- `review_budget`: an explicit total, including the PR reserve. TARS enforces a
+  minimum of `3 × iteration_count + 3`.
+- `review_budget_per_iteration`: an allowance of at least three retries per
+  iteration. TARS multiplies it by `iteration_count` and adds three PR retries.
+
+These retries form a shared implementation allowance; they are not a hard cap
+on each individual iteration. For three iterations, the minimum total is 12:
+nine implementation retries and three protected PR retries. Initial submissions,
+approvals, and iteration advances consume no retries.
+
+TARS starts only iteration 1. Each iteration must commit, publish an `implementation-response` with its
 `iteration`, and receive Codex approval before TARS starts the next one. A
 requested change stays in the current iteration. Only approval of the final
 iteration invokes the normal push-and-create-PR handoff. Direct Build lanes
@@ -374,7 +381,10 @@ TARS enforces two independent limits, persisted separately per lane:
   pre-approval planning phase of plan-first lanes and is the whole-lifecycle cap
   for direct-build lanes (which have no reviewer-selected budget).
 - `review_budget` is the **implementation-phase review budget**, chosen by the
-  reviewer at plan approval and persisted separately from `max_rounds`.
+  reviewer at plan approval and persisted separately from `max_rounds`. TARS
+  enforces at least three retries per iteration plus three PR retries. The PR
+  reserve cannot be consumed until the lane enters `post_pr_feedback`. Legacy
+  lane budgets remain unchanged until updated or a new plan is approved.
 
 Once a plan is approved, `round` is ordering/correlation metadata only and never
 caps implementation work. Each implementation-phase `code-review` with

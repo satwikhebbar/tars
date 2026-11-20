@@ -25,7 +25,7 @@ test("persists resolved harness snapshots and ignores unbound legacy rows", asyn
     authorModel: null, reviewerModel: null,
     transitionHandoffPath: null, transitionWorkflowId: null, transitionRequestedAt: null,
     planVerdictPath: null, planVerdictId: null, iterationCount: 1, currentIteration: 1,
-    reviewBudget: null, reviewBudgetConsumed: 0,
+    reviewBudget: null, reviewBudgetConsumed: 0, prReviewReserve: 0,
     invalidResumeState: null, invalidResumePhase: null,
     investigationCapture: "off", authorEvidence: null, reviewerEvidence: null,
   })
@@ -55,12 +55,13 @@ test("round-trips the review budget and consumed counter separately from max_rou
     worktreePath: "/budgeted", authorSessionId: "claude-author", reviewerSessionId: "cursor-reviewer",
     authorHarness: "claude", reviewerHarness: "cursor", authorTool: "claude", reviewerTool: "cursor",
     state: "implementing", maxRounds: 5, planning: "required", phase: "building",
-    iterationCount: 3, currentIteration: 2, reviewBudget: 6, reviewBudgetConsumed: 2,
+    iterationCount: 3, currentIteration: 2, reviewBudget: 12, reviewBudgetConsumed: 2, prReviewReserve: 3,
   }
   state.saveLane(lane)
-  assert.equal(state.lane("/budgeted").reviewBudget, 6)
+  assert.equal(state.lane("/budgeted").reviewBudget, 12)
   assert.equal(state.lane("/budgeted").reviewBudgetConsumed, 2)
   assert.equal(state.lane("/budgeted").maxRounds, 5)
+  assert.equal(state.lane("/budgeted").prReviewReserve, 3)
   state.saveLane({ ...lane, reviewBudgetConsumed: 3 })
   assert.equal(state.lane("/budgeted").reviewBudgetConsumed, 3)
   state.close()

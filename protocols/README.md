@@ -17,8 +17,10 @@ TARS treats `.agent-handoff/` as the durable event log:
    implementation's review budget in one of two forms: `review_budget` (an
    explicit total of reviewer `changes_requested` cycles allowed) or
    `review_budget_per_iteration` (an allowance per iteration; the total is
-   allowance × `iteration_count`). A plan approval is not a terminal lane
-   state. The handoff `round` is ordering/correlation metadata: once a plan is
+   max(3, allowance) × `iteration_count` + 3 reserved PR retries). Explicit totals
+   also have a minimum of `3 × iteration_count + 3`. The implementation
+   allowance is shared across iterations; the three PR retries are protected
+   until `post_pr_feedback`. A plan approval is not a terminal lane state. The handoff `round` is ordering/correlation metadata: once a plan is
    approved it never caps implementation work.
 2. TARS starts one scheduled iteration at a time. OpenCode commits and writes
    `implementation-response` with `id`,

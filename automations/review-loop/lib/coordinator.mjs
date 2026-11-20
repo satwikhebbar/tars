@@ -154,7 +154,7 @@ export class ReviewLoopCoordinator {
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
       if (event.destination === "author" && event.reviewKind === "plan" && event.outcome === "approved") {
         if (lane.authorHarness !== "opencode") {
-          const building = { ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, reviewBudget: reviewBudgetFor(event.handoff.metadata) }
+          const building = { ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, prReviewReserve: 3, reviewBudget: reviewBudgetFor(event.handoff.metadata) }
           const dispatchId = await this.sendAuthorPrompt(building, sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
           this.state.dispatch(lane.worktreePath, event.key, building, { dispatchId, destinationRole: "author" })
           results.push({ event, action: "sent:author:build" })
@@ -171,7 +171,7 @@ export class ReviewLoopCoordinator {
           planVerdictId: event.handoff.metadata.id,
           iterationCount: iterationCountFor(event.handoff.metadata),
           currentIteration: 1,
-          reviewBudget: reviewBudgetFor(event.handoff.metadata),
+          prReviewReserve: 3, reviewBudget: reviewBudgetFor(event.handoff.metadata),
         })
         await this.aoe.send(sessionId, "/compact")
         this.state.markDispatched(lane.worktreePath, event.key, { boundaryKind: "command" })
@@ -429,7 +429,8 @@ export function laneLimitViolation(lane, event, { alreadyConsumed = false } = {}
   if (event.reviewKind !== "code") return null
   if (event.outcome === "changes_requested") {
     if (Number.isInteger(lane.reviewBudget)) {
-      return (lane.reviewBudgetConsumed ?? 0) + (alreadyConsumed ? 0 : 1) > lane.reviewBudget ? "review_budget" : null
+      const reserve = lane.phase === "post_pr_feedback" || event.reopensLane ? 0 : (lane.prReviewReserve ?? 0)
+      return (lane.reviewBudgetConsumed ?? 0) + (alreadyConsumed ? 0 : 1) > lane.reviewBudget - reserve ? "review_budget" : null
     }
     return event.round > lane.maxRounds ? "max_rounds" : null
   }
@@ -440,7 +441,7 @@ export function laneLimitViolation(lane, event, { alreadyConsumed = false } = {}
 function promptFor(lane, event) {
   const path = event.handoff.path
   if (event.destination === "reviewer" && event.reviewKind === "plan") {
-    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count, a numbered Implementation Iterations schedule, and the review budget the implementation may consume: either review_budget <total> or review_budget_per_iteration <allowance> (allowance x iteration_count). Do not implement the plan or edit implementation files.`
+    return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path} and review the requested plan artifact. Write exactly one plan-review-verdict handoff in the lane inbox with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, responds_to ${event.handoff.metadata.id}, and outcome approved, changes_requested, or blocked. For approval, include a positive iteration_count, a numbered Implementation Iterations schedule, and the review budget the implementation may consume: either review_budget <total including PR reserve> or review_budget_per_iteration <allowance>. Allow at least 3 changes_requested retries per iteration plus 3 reserved for PR feedback; the coordinator enforces this minimum. Do not implement the plan or edit implementation files.`
   }
   if (event.destination === "reviewer") {
     return `Review-loop: you are the reviewer. Use the handoff-review skill. Read ${path}, review immutable commit ${event.handoff.metadata.head_commit}, then write one code-review handoff with created_by: reviewer, workflow_id ${event.handoff.metadata.workflow_id}, round ${event.round}, iteration ${event.iteration}, and outcome approved, changes_requested, or blocked. Do not edit implementation files.`
@@ -474,11 +475,13 @@ function iterationCountFor(metadata) {
 
 /** Derives the total implementation review budget from an approved plan verdict. */
 export function reviewBudgetFor(metadata) {
-  if (Number.isInteger(metadata.review_budget) && metadata.review_budget > 0) return metadata.review_budget
+  const iterations = iterationCountFor(metadata)
+  const minimum = 3 * iterations + 3
+  if (Number.isInteger(metadata.review_budget) && metadata.review_budget > 0) return Math.max(minimum, metadata.review_budget)
   if (Number.isInteger(metadata.review_budget_per_iteration) && metadata.review_budget_per_iteration > 0) {
-    return metadata.review_budget_per_iteration * iterationCountFor(metadata)
+    return Math.max(3, metadata.review_budget_per_iteration) * iterations + 3
   }
-  return null
+  return minimum
 }
 
 function iterationFor(metadata) {

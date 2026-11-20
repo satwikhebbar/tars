@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
-import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, mkdir, realpath, rm, writeFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,6 +10,30 @@ import { StateStore } from "../lib/state.mjs"
 
 const execFileAsync = promisify(execFile)
 const cliPath = fileURLToPath(new URL("../cli.mjs", import.meta.url))
+
+test("plain lane resume unblocks and dispatches while lane diagnose is read-only", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tars-cli-resume-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const worktree = await realpath(root)
+  const bin = join(root, "bin")
+  const sent = join(root, "sent")
+  const statePath = join(root, "state.sqlite")
+  await mkdir(bin)
+  await mkdir(join(root, ".agent-handoff", "inbox"), { recursive: true })
+  await writeFile(join(root, ".agent-handoff", "inbox", "retry.md"), `---\nid: retry\ntype: code-review\nstatus: ready\ncreated_by: reviewer\nworkflow_id: fix\nround: 2\niteration: 1\noutcome: changes_requested\n---\nFix the finding.\n`)
+  await writeFile(join(bin, "aoe"), `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';\nconst command=process.argv[2];\nif(command==='list') console.log(JSON.stringify([{id:'author',path:${JSON.stringify(worktree)},tool:'codex'},{id:'reviewer',path:${JSON.stringify(worktree)},tool:'codex'}]));\nelse if(command==='ps') console.log(JSON.stringify([{session:'author',state:'idle'},{session:'reviewer',state:'idle'}]));\nelse if(command==='send') appendFileSync(${JSON.stringify(sent)},'sent\\n');\n`)
+  await chmod(join(bin, "aoe"), 0o700)
+  const state = new StateStore(statePath)
+  await state.open()
+  state.saveLane({ worktreePath: worktree, authorSessionId: "author", reviewerSessionId: "reviewer", authorTool: "codex", authorHarness: "codex", reviewerTool: "codex", reviewerHarness: "codex", state: "blocked", maxRounds: 20, reviewBudget: 20, reviewBudgetConsumed: 6 })
+  state.close()
+  const run = command => execFileAsync(process.execPath, [cliPath, "lane", command, "--worktree", worktree, "--state", statePath], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } })
+  assert.match((await run("diagnose")).stdout, /Verdict:  blocked/)
+  await assert.rejects(readFile(sent), { code: "ENOENT" })
+  assert.match((await run("resume")).stdout, /dispatched:/)
+  await run("resume")
+  assert.equal(await readFile(sent, "utf8"), "sent\n")
+})
 
 for (const args of [["--help"], ["-h"], ["handoff", "--help"]]) {
   test(`prints usage for ${args.join(" ")}`, async () => {

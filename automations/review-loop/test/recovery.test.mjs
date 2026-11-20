@@ -84,6 +84,18 @@ test("blocked diagnosis identifies the reviewer handoff rather than blaming roun
   fixture.state.close()
 })
 
+test("blocked diagnosis identifies a waiting retry after limits were raised without resume", async () => {
+  const fixture = await laneFixture({ state: "blocked", maxRounds: 20, reviewBudget: 20, reviewBudgetConsumed: 6, currentIteration: 2, iterationCount: 3 })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/review.md", `id: waiting-review\ntype: code-review\nworkflow_id: fix\nround: 11\niteration: 2\noutcome: changes_requested`)
+  const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
+  assert.equal(analysis.verdict, "blocked")
+  assert.match(analysis.reasons[0], /current limits allow review:waiting-review:changes_requested/)
+  assert.match(analysis.reasons[0], /--max-rounds 20 --review-budget 20 --resume/)
+  assert.equal(analysis.nextTarget, fixture.state.lane(fixture.worktree).authorSessionId)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "blocked")
+  fixture.state.close()
+})
+
 test("a terminal blocker is not a stale prompt after a corrected request is dispatched", async () => {
   const fixture = await laneFixture({ state: "reviewing" })
   await writeWorkflowHandoff(fixture.worktree, "inbox/blocker.md", `id: bad-commit\ntype: code-review\nworkflow_id: fix\nround: 2\noutcome: blocked`)
@@ -91,6 +103,29 @@ test("a terminal blocker is not a stale prompt after a corrected request is disp
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.notEqual(analysis.verdict, "stale_delivery")
   assert.equal(analysis.unconfirmed.length, 0)
+  fixture.state.close()
+})
+
+test("resume clears a stale stop and delivers the pending review without raising limits", async () => {
+  const fixture = await laneFixture({ state: "blocked", reviewBudget: 20, reviewBudgetConsumed: 6 })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/review.md", `id: retry\ntype: code-review\nworkflow_id: fix\nround: 11\niteration: 1\noutcome: changes_requested`)
+  const result = await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true, unblock: true })
+  assert.ok(result.action)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 7)
+  assert.equal(fixture.aoe.sent.length, 1)
+  await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true, unblock: true })
+  assert.equal(fixture.aoe.sent.length, 1)
+  fixture.state.close()
+})
+
+test("resume preserves an unresolved reviewer blocker even before it is journaled", async () => {
+  const fixture = await laneFixture({ state: "blocked" })
+  await writeWorkflowHandoff(fixture.worktree, "inbox/review.md", `id: blocker\ntype: code-review\nworkflow_id: fix\nround: 2\noutcome: blocked`)
+  const result = await resumeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree, dispatch: true, unblock: true })
+  assert.equal(result.action, null)
+  assert.equal(fixture.state.lane(fixture.worktree).state, "blocked")
+  assert.equal(fixture.aoe.sent.length, 0)
   fixture.state.close()
 })
 
@@ -108,7 +143,7 @@ test("an undispatched event over the review budget blocks the lane", async () =>
   )
   const analysis = await analyzeLane({ aoe: fixture.aoe, state: fixture.state, worktreePath: fixture.worktree })
   assert.equal(analysis.verdict, "blocked")
-  assert.match(analysis.reasons[0], /review budget 1 \(consumed 1\)/)
+  assert.match(analysis.reasons[0], /review budget 1 \(consumed 1; PR reserve 0\)/)
   fixture.state.close()
 })
 

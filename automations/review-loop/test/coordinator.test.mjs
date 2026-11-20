@@ -3,8 +3,22 @@ import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { ReviewLoopCoordinator } from "../lib/coordinator.mjs"
+import { laneLimitViolation, reviewBudgetFor, ReviewLoopCoordinator } from "../lib/coordinator.mjs"
 import { StateStore } from "../lib/state.mjs"
+
+test("plan budgets enforce three retries per iteration plus a protected PR reserve", () => {
+  assert.equal(reviewBudgetFor({ iteration_count: 3, review_budget_per_iteration: 2 }), 12)
+  assert.equal(reviewBudgetFor({ iteration_count: 3, review_budget: 5 }), 12)
+  assert.equal(reviewBudgetFor({ iteration_count: 3, review_budget: 20 }), 20)
+  assert.equal(reviewBudgetFor({ iteration_count: 3, review_budget_per_iteration: 4 }), 15)
+  const lane = { planning: "required", planVerdictId: "plan", phase: "building", reviewBudget: 12, reviewBudgetConsumed: 9, prReviewReserve: 3 }
+  const retry = { reviewKind: "code", outcome: "changes_requested", round: 20 }
+  assert.equal(laneLimitViolation(lane, retry), "review_budget")
+  for (const consumed of [9, 10, 11]) {
+    assert.equal(laneLimitViolation({ ...lane, phase: "post_pr_feedback", reviewBudgetConsumed: consumed }, retry), null)
+  }
+  assert.equal(laneLimitViolation({ ...lane, phase: "post_pr_feedback", reviewBudgetConsumed: 12 }, retry), "review_budget")
+})
 
 test("implementation response wakes only the registered Codex session once", async () => {
   const fixture = await laneFixture()
@@ -223,7 +237,7 @@ test("a planned lane reviews each approved iteration before opening a PR", async
   assert.match(fixture.aoe.sent.at(-1).message, /create a pull request/i)
   assert.doesNotMatch(fixture.aoe.sent.at(-1).message, /record the approved review|read .*code-review/i)
   assert.match(fixture.aoe.sent.at(-1).message, /do not create another handoff.*inspect TARS internals/i)
-  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 2)
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 9)
   assert.equal(fixture.state.lane(fixture.worktree).reviewBudgetConsumed, 0)
   fixture.state.close()
 })
@@ -236,7 +250,7 @@ test("derives the review budget from the approved verdict on the non-OpenCode ap
     `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 3\nreview_budget_per_iteration: 2`,
   )
   await perIteration.coordinator.processAll()
-  assert.equal(perIteration.state.lane(perIteration.worktree).reviewBudget, 6)
+  assert.equal(perIteration.state.lane(perIteration.worktree).reviewBudget, 12)
   perIteration.state.close()
 
   const explicit = await laneFixture({ authorHarness: "claude", reviewerHarness: "codex" })
@@ -246,7 +260,7 @@ test("derives the review budget from the approved verdict on the non-OpenCode ap
     `id: plan-verdict\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: approved\niteration_count: 3\nreview_budget: 5`,
   )
   await explicit.coordinator.processAll()
-  assert.equal(explicit.state.lane(explicit.worktree).reviewBudget, 5)
+  assert.equal(explicit.state.lane(explicit.worktree).reviewBudget, 12)
   explicit.state.close()
 })
 
@@ -293,7 +307,7 @@ test("post-approval responses and approvals advance beyond the old round cap", a
   )
   await fixture.coordinator.processAll()
   assert.equal(fixture.state.lane(fixture.worktree).state, "implementing")
-  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 2)
+  assert.equal(fixture.state.lane(fixture.worktree).reviewBudget, 6)
 
   await writeWorkflowHandoff(
     fixture.worktree,

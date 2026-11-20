@@ -54,14 +54,25 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     return finish("blocked", "lane holds an invalid handoff; remove or fix it in the queue before resuming")
   }
   if (lane.state === "blocked") {
-    const blocker = events.findLast((event) => event.outcome === "blocked" && dispatched.has(event.key))
+    const blocker = events.findLast((event) => event.outcome === "blocked" && matchesCurrentIteration(lane, event) && !hasAdvancement(allHandoffs, event))
     if (blocker) {
       return finish("blocked", `reviewer reported a blocker in ${blocker.handoff.path}; resolve that blocker, then explicitly unblock with lane set-max-rounds --resume (include the desired limits)`)
     }
     const limited = events.find((event) => !dispatched.has(event.key) && matchesCurrentIteration(lane, event) && laneLimitViolation(lane, event))
     if (limited) {
       const limit = laneLimitViolation(lane, limited)
-      return finish("blocked", `${limited.key} exceeds ${limit === "review_budget" ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})` : `max_rounds ${lane.maxRounds}`}; raise that limit with lane set-max-rounds --resume`)
+      return finish("blocked", `${limited.key} exceeds ${limit === "review_budget" ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0}; PR reserve ${lane.prReviewReserve ?? 0})` : `max_rounds ${lane.maxRounds}`}; raise that limit with lane set-max-rounds --resume`)
+    }
+    const waiting = events.filter((event) => !dispatched.has(event.key) && matchesCurrentIteration(lane, event))
+    if (waiting.length === 1) {
+      const event = waiting[0]
+      const limits = Number.isInteger(lane.reviewBudget)
+        ? ` --review-budget ${lane.reviewBudget}`
+        : ""
+      analysis.nextEvent = event
+      analysis.nextTarget = targetSession(lane, event)
+      analysis.canUnblock = true
+      return finish("blocked", `saved blocked state remains, but current limits allow ${event.key} (${event.handoff.path}); no unresolved reviewer blocker was found. Run tars lane resume to clear this stop and continue, or use: tars lane set-max-rounds --worktree ${JSON.stringify(worktreePath)} --max-rounds ${lane.maxRounds}${limits} --resume`)
     }
     return finish("blocked", "lane state is blocked; changing limits alone does not clear it: use lane set-max-rounds --resume after resolving the blocker")
   }
@@ -99,7 +110,7 @@ export async function analyzeLane({ aoe, state, worktreePath }) {
     const violation = laneLimitViolation(lane, overLimit[0])
     const detail =
       violation === "review_budget"
-        ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})`
+        ? `review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0}; PR reserve ${lane.prReviewReserve ?? 0})`
         : `max_rounds ${lane.maxRounds}`
     return finish("blocked", `undispatched event exceeds ${detail}`)
   }
@@ -207,7 +218,7 @@ function pendingVerdict(analysis, lane, event, session, dispatched) {
  * or `createSessions` is set, and each flag enables exactly one recovery action
  * only when the evidence supports it.
  */
-export async function resumeLane({ aoe, state, worktreePath, dispatch = false, createSessions = false, captureRuntime, validateCommit }) {
+export async function resumeLane({ aoe, state, worktreePath, dispatch = false, unblock = false, createSessions = false, captureRuntime, validateCommit }) {
   let analysis = await analyzeLane({ aoe, state, worktreePath })
 
   if (createSessions) {
@@ -222,7 +233,8 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
 
   if (!dispatch) return { analysis, action: null }
 
-  if (!["needs_dispatch", "stale_delivery"].includes(analysis.verdict)) {
+  if (!["needs_dispatch", "stale_delivery"].includes(analysis.verdict) && !(unblock && analysis.canUnblock)) {
+    if (unblock) return { analysis, action: null }
     throw new Error(`Refusing --dispatch: verdict is ${analysis.verdict}. ${analysis.reasons.join("; ")}`)
   }
 
@@ -238,6 +250,15 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
   }
   const renewal = startClaimRenewal(() => state.renewLaneClaim(worktreePath, token))
   try {
+    // Re-check under the dispatcher claim before clearing any saved stop.
+    analysis = await analyzeLane({ aoe, state, worktreePath })
+    if (unblock && analysis.canUnblock) {
+      state.saveLane({ ...analysis.lane, state: analysis.lane.phase === "planning" ? "planning" : "implementing" })
+      analysis = await analyzeLane({ aoe, state, worktreePath })
+    }
+    if (!["needs_dispatch", "stale_delivery"].includes(analysis.verdict)) {
+      return { analysis, action: null }
+    }
     if (analysis.verdict === "stale_delivery") {
       state.clearDispatched(worktreePath, analysis.nextEvent.key)
     }
@@ -245,10 +266,10 @@ export async function resumeLane({ aoe, state, worktreePath, dispatch = false, c
     const results = await coordinator.dispatchLane(state.lane(worktreePath))
     if (!results.length) {
       throw new Error(
-        `Resume dispatched nothing for ${worktreePath}; re-run without --dispatch to see the current verdict.`,
+        `Resume dispatched nothing for ${worktreePath}; run lane diagnose to see the current verdict.`,
       )
     }
-    return { analysis, action: results[0] }
+    return { analysis: await analyzeLane({ aoe, state, worktreePath }), action: results[0] }
   } finally {
     renewal.stop()
     state.releaseLane(worktreePath, token)
@@ -395,7 +416,7 @@ export function formatAnalysis(analysis) {
   const { lane, sessions } = analysis
   const iteration = lane.iterationCount > 1 ? `, iteration ${lane.currentIteration}/${lane.iterationCount}` : ""
   const budget = Number.isInteger(lane.reviewBudget)
-    ? `, review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0})`
+    ? `, review budget ${lane.reviewBudget} (consumed ${lane.reviewBudgetConsumed ?? 0}${lane.prReviewReserve ? `; PR reserve ${lane.prReviewReserve}` : ""})`
     : ""
   const lines = [
     `Worktree: ${analysis.worktreePath}`,
