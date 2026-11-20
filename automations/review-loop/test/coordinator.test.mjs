@@ -106,6 +106,36 @@ test("a non-OpenCode author starts approved plan work without an OpenCode compac
   fixture.state.close()
 })
 
+test("Codex revisions use the planner and implementation waits for the model switch", async (t) => {
+  const { worktree, state, aoe, coordinator } = await laneFixture({ authorHarness: "codex" })
+  t.after(() => state.close())
+  state.saveLane({ ...state.lane(worktree), planModel: "gpt-6.2-sol", authorModel: "gpt-6-luna" })
+  const switches = []
+  aoe.switchModel = async (id, model) => {
+    assert.equal(id, "opencode-1")
+    switches.push(model)
+  }
+  await writeWorkflowHandoff(worktree, "inbox/revise.md", "id: revise\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 1\noutcome: changes_requested")
+  await coordinator.processAll()
+  assert.deepEqual(switches, ["gpt-6.2-sol"])
+  assert.match(aoe.sent[0].message, /revise the plan/)
+  await writeWorkflowHandoff(worktree, "inbox/approved.md", "id: approved\ntype: plan-review-verdict\ncreated_by: reviewer\nworkflow_id: 45\nround: 2\noutcome: approved\niteration_count: 1\nreview_budget: 1")
+  const switchModel = aoe.switchModel
+  aoe.switchModel = async () => { throw new Error("model switch unconfirmed") }
+  await assert.rejects(coordinator.processAll(), /model switch unconfirmed/)
+  assert.equal(state.lane(worktree).phase, "planning")
+  assert.equal(aoe.sent.length, 1)
+
+  aoe.switchModel = switchModel
+  await coordinator.processAll()
+  assert.deepEqual(switches, ["gpt-6.2-sol", "gpt-6-luna"])
+  assert.equal(state.lane(worktree).phase, "building")
+  assert.equal(aoe.sent[1].sessionId, "opencode-1")
+  assert.match(aoe.sent[1].message, /Continue the approved TARS plan/)
+  await coordinator.processAll()
+  assert.equal(aoe.sent.length, 2)
+})
+
 test("plan approval compacts then starts Build mode without approving the lane", async () => {
   const fixture = await laneFixture()
   await writeWorkflowHandoff(

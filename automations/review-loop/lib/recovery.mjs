@@ -333,7 +333,9 @@ function recoveryModelArgs(lane, role) {
   if (lane.phase === "planning" && lane.authorTool === "opencode") {
     return ["--agent", "tars-plan", ...(lane.planModel ? ["--model", lane.planModel] : [])]
   }
-  return lane.authorModel ? ["--model", lane.authorModel] : []
+  const planning = (lane.invalidResumePhase ?? lane.phase) === "planning"
+  const model = planning && lane.authorHarness === "codex" ? lane.planModel ?? lane.authorModel : lane.authorModel
+  return model ? ["--model", model] : []
 }
 
 function sessionInfo(worktreePath, sessions, runtime, sessionId, tool) {

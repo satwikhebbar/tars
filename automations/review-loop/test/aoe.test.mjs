@@ -101,6 +101,23 @@ test("reads the selected OpenCode agent from the terminal footer", () => {
   assert.equal(agentLabelFromCapture("old output\n  Build · DeepSeek V4 Flash\n"), "build")
 })
 
+test("waits for a fresh Codex model confirmation in the requested session", async () => {
+  const client = new AoeClient()
+  const prior = "  • Model changed to gpt-6-luna medium for this session only"
+  const captures = [prior, prior, `${prior}\n${prior}`]
+  client.captureSession = async (id) => {
+    assert.equal(id, "author")
+    return { content: captures.shift() }
+  }
+  client.send = async (...args) => {
+    assert.deepEqual(args, ["author", "/model gpt-6-luna", { noRevive: true }])
+  }
+  await client.switchModel("author", "gpt-6-luna", { attempts: 2, pollIntervalMs: 0 })
+  assert.equal(captures.length, 0)
+  client.captureSession = async () => ({ content: prior })
+  await assert.rejects(client.switchModel("author", "gpt-6-luna", { attempts: 1, pollIntervalMs: 0 }), /did not confirm/)
+})
+
 test("cycles the live OpenCode session until the requested primary agent is visible", async () => {
   const client = new SwitchAoe(["Tars-Plan · model", "Build · model"])
   await client.switchAgent("session-1", "build", { pollIntervalMs: 0 })

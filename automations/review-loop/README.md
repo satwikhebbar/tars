@@ -69,7 +69,23 @@ tars lane start \
   --author claude --reviewer codex --planning auto
 ```
 
-The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup. `--plan-model <provider/model>` is available only when OpenCode is the author.
+The bounded preflight proposes the branch, AoE worktree name, and whether the issue needs a plan. `--planning auto` (the default) accepts that decision; use `always` or `never` to override it. An invalid or unsupported preflight falls back to the safer plan-first path, and lane start reports the fallback reason. The decision source and reason are also persisted and shown by `tars status`, so a planning lane can be diagnosed after startup.
+
+For Codex or OpenCode authors, set `harnesses.<harness>.defaults.planning.model`
+and `harnesses.<harness>.defaults.author.model` in TARS config, or override them
+with `--plan-model` and `--author-model`.
+
+```bash
+tars lane start --repo /absolute/path/to/main-checkout --issue 44 \
+  --author codex --planning always \
+  --plan-model gpt-6.2-sol --author-model gpt-6-luna
+```
+
+The Codex author plans and revises on the planning model. After approval, TARS
+confirms the switch to the implementation model in the same Codex chat before
+sending the first implementation prompt. This requires a Codex CLI with inline
+`/model <model>` support. If only the planning model is set, TARS resolves
+Codex's default implementation model in the worktree at startup.
 
 `--issue` requires an existing, open GitHub issue number. Although `gh issue view` also
 accepts pull requests, TARS rejects PR URLs and mismatched issue numbers before
@@ -113,7 +129,7 @@ TARS checks lane models again in that worktree before starting either agent
 the newly owned worktree and sessions. `lane start` refuses existing sessions;
 use `lane register`/`lane watch` to adopt existing work instead.
 
-For `planning: required`, TARS launches its setup-installed OpenCode `tars-plan` agent rather than OpenCode's read-only built-in `plan` agent. It can write only the durable `plans/` and `.agent-handoff/` artifacts, waits for Codex to approve the `plan-review`, sends `/compact`, then switches the live primary session to OpenCode's native `build` agent before sending implementation work. `setup.mjs` installs the planning agent.
+For an OpenCode author with `planning: required`, TARS launches the `tars-plan` agent installed by `setup.mjs`. It can write only the durable `plans/` and `.agent-handoff/` artifacts. After the reviewer approves the plan, TARS sends `/compact` and switches the live session to OpenCode's `build` agent before sending implementation work.
 
 For `planning: not_required`, TARS follows the original direct Build → code-review loop. The command prints the created worktree and both session IDs, then sends the appropriate opening issue prompt. It does not start another polling loop.
 

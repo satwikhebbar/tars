@@ -262,6 +262,28 @@ test("provisions and validates the worktree before starting either agent", async
   assert.deepEqual(events, ["provision", "validate", "start-author", "start-reviewer"])
 })
 
+test("Codex launches with the planning model and persists the default implementation model", async () => {
+  const aoe = new FakeAoe(), state = new FakeState()
+  const author = { key: "codex", tool: "codex", launchArgs: ["--approve-for-me"] }
+  await startLane({
+    aoe, state, repoPath: "/repo", issue: { number: 44 }, branch: "issue/44-codex-plan",
+    openingPrompt: "Plan", planning: "required", planModel: "gpt-6.2-sol",
+    roles: { author, reviewer: { key: "codex", tool: "codex" } },
+    resolveCodexDefaultModel: async ({ cwd, harness }) => {
+      assert.equal(cwd, "/repo--issue-44-add-calendar-export")
+      assert.equal(harness, author)
+      return "gpt-6-luna"
+    },
+    validateModels: async (entries) => {
+      assert.equal(entries.find(({ role }) => role === "author").model, "gpt-6-luna")
+    },
+  })
+  assert.deepEqual(aoe.authorOptions.extraArgs, ["--approve-for-me", "--model", "gpt-6.2-sol"])
+  assert.equal(state.entries[0].phase, "planning")
+  assert.equal(state.entries[0].planModel, "gpt-6.2-sol")
+  assert.equal(state.entries[0].authorModel, "gpt-6-luna")
+})
+
 test("a model available in the source but absent in the worktree blocks normal and capture starts and cleans up", async (t) => {
   for (const investigationCapture of [false, true]) {
     const fixture = await captureGitFixture(t, "codex/worktree-validation")

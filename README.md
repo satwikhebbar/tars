@@ -181,6 +181,8 @@ Model identifiers use the selected harness's syntax: OpenCode expects
 `provider/model` (such as `openai/gpt-6-luna` or `deepseek/deepseek-flash`);
 Codex expects a bare model ID (such as `gpt-6-luna` or `gpt-6.1-sol`).
 TARS accepts `--author-model` and `--reviewer-model` for per-lane overrides.
+For a Codex author, `--plan-model gpt-6.2-sol --author-model gpt-6-luna`
+uses Sol for planning and switches the same chat to Luna after plan approval.
 Before classification or lane creation, it checks resolved OpenCode author,
 reviewer and planning selections against `opencode models` in the repository.
 This includes configured custom providers, model aliases, plugins and model
@@ -217,7 +219,8 @@ defaults under the selected harness in the global or repository `.tars/config.js
   "harnesses": {
     "codex": {
       "defaults": {
-        "author": { "model": "gpt-5.6-terra" },
+        "planning": { "model": "gpt-6.2-sol" },
+        "author": { "model": "gpt-6-luna" },
         "reviewer": { "model": "gpt-5.6-terra" }
       }
     },

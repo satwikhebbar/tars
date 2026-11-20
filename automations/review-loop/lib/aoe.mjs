@@ -35,8 +35,19 @@ export class AoeClient {
     return JSON.parse(stdout)
   }
 
-  async send(sessionId, message) {
-    await execFileAsync(this.command, ["send", sessionId, message])
+  async send(sessionId, message, { noRevive = false } = {}) {
+    await execFileAsync(this.command, ["send", ...(noRevive ? ["--no-revive"] : []), sessionId, message])
+  }
+
+  async switchModel(sessionId, model, { attempts = 20, pollIntervalMs = 250 } = {}) {
+    const before = codexModelChanges((await this.captureSession(sessionId)).content).filter((id) => id === model).length
+    await this.send(sessionId, `/model ${model}`, { noRevive: true })
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await delay(pollIntervalMs)
+      const changes = codexModelChanges((await this.captureSession(sessionId)).content)
+      if (changes.at(-1) === model && changes.filter((id) => id === model).length > before) return
+    }
+    throw new Error(`Codex session ${sessionId} did not confirm the switch to ${model}. Check the session and use a Codex CLI that supports /model <model>.`)
   }
 
   async switchAgent(sessionId, agent, { attempts = 8, pollIntervalMs = 250 } = {}) {
@@ -179,6 +190,10 @@ export class AoeClient {
       throw new Error(`Expected one newly-created ${tool} AoE session; found ${created.length}.`)
     return created[0]
   }
+}
+
+function codexModelChanges(content = "") {
+  return [...content.matchAll(/^\s*• Model changed to (\S+)/gm)].map((match) => match[1])
 }
 
 export function agentLabelFromCapture(content = "") {

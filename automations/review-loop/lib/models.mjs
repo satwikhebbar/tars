@@ -73,7 +73,17 @@ export async function readOpenCodeCatalog({ cwd, harness, timeoutMs = 10_000, co
 }
 
 /** Metadata only: no threads, prompts, or inference requests. */
-export async function readCodexCatalog({ cwd, harness, timeoutMs = 10_000, command = "codex" } = {}) {
+export async function readCodexCatalog(options) {
+  return (await readCodexModels(options)).catalog
+}
+
+export async function readCodexDefaultModel(options) {
+  const { defaultModel } = await readCodexModels({ ...options, resolveDefault: true })
+  if (!defaultModel) throw new Error("Cannot resolve Codex's default implementation model. Set --author-model or configure the Codex author model in TARS.")
+  return defaultModel
+}
+
+async function readCodexModels({ cwd, harness, timeoutMs = 10_000, command = "codex", resolveDefault = false } = {}) {
   const args = catalogArgs(harness)
   const child = spawn(command, [...args, "app-server"], { cwd, stdio: ["pipe", "pipe", "pipe"] })
   const lines = createInterface({ input: child.stdout })
@@ -112,22 +122,29 @@ export async function readCodexCatalog({ cwd, harness, timeoutMs = 10_000, comma
     await request("initialize", { clientInfo: { name: "tars", version: "1.0.0" } })
     send({ method: "initialized" })
     const { config } = await request("config/read", {})
-    const { account } = await request("account/read", { refreshToken: false })
-    if (account?.type !== "chatgpt" || (config.model_provider && config.model_provider !== "openai")) return null
+    if (resolveDefault && config.model) return { defaultModel: config.model }
+    if (!resolveDefault) {
+      const { account } = await request("account/read", { refreshToken: false })
+      if (account?.type !== "chatgpt" || (config.model_provider && config.model_provider !== "openai")) return { catalog: null }
+    }
     const models = new Set(), cursors = new Set()
     let cursor = null
+    let defaultModel
     do {
       const page = await request("model/list", { includeHidden: true, limit: 100, cursor })
       if (!Array.isArray(page?.data) || page.data.some((model) => typeof model.model !== "string")) {
         throw new Error("Invalid model catalog returned by Codex")
       }
-      for (const model of page.data) models.add(model.model)
+      for (const model of page.data) {
+        models.add(model.model)
+        if (model.isDefault) defaultModel ??= model.model
+      }
       cursor = page.nextCursor ?? null
       if (cursor && (typeof cursor !== "string" || cursors.has(cursor))) throw new Error("Invalid Codex model catalog pagination")
       cursors.add(cursor)
     } while (cursor)
     if (!models.size) throw new Error("Codex returned an empty model catalog")
-    return [...models]
+    return { catalog: [...models], defaultModel }
   } catch (error) {
     throw new Error(`Cannot validate Codex models: ${error.message}. Check Codex login/configuration and try again.`, { cause: error })
   } finally {

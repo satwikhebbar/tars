@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import { groupForWorktree } from "./aoe.mjs"
 import { captureLaunchCommand, createOpenCodeEvidence, ensureOpenCodeServer, openCodeAttachCommand, prepareCapture, stopOpenCodeServer } from "./investigation-capture.mjs"
 import { markedDispatch } from "./investigation-dispatch.mjs"
-import { assertLaneModels } from "./models.mjs"
+import { assertLaneModels, readCodexDefaultModel } from "./models.mjs"
 import { issueKey } from "./issue-lanes.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -77,8 +77,11 @@ export function setLaneLimits({ state, worktreePath, maxRounds, reviewBudget, re
 }
 
 /** Creates one AoE-managed implementation worktree and its reviewer session. */
-export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, validateModels = assertLaneModels, investigationCapture = false, captureRuntime, captureHome }) {
+export async function startLane({ aoe, state, repoPath, issue, branch, worktreeName, maxRounds, openingPrompt, planning, planningSource, planningReason, authorModel, reviewerModel, planModel, roles, provision, validateModels = assertLaneModels, resolveCodexDefaultModel = readCodexDefaultModel, investigationCapture = false, captureRuntime, captureHome }) {
   roles ??= { author: { key: "opencode", tool: "opencode" }, reviewer: { key: "codex", tool: "codex" } }
+  const openCodePlanning = planning === "required" && roles.author.key === "opencode"
+  const codexPlanningModel = planning === "required" && roles.author.key === "codex" ? planModel : undefined
+  const authorLaunchArgs = openCodePlanning ? ["--agent", "tars-plan", ...modelArgs(planModel)] : modelArgs(codexPlanningModel ?? authorModel)
   const capture = investigationCapture ? await prepareCapture({ roles, codexHome: captureHome }) : null
   let author
   let reviewer
@@ -87,9 +90,7 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
   try {
     author = await aoe.findOrCreateWorktreeSession(repoPath, branch, worktreeName, {
       tool: roles.author.tool,
-      // tars-plan is an OpenCode agent. Other harnesses still receive the
-      // role-level planning prompt, but must not be passed OpenCode CLI flags.
-      extraArgs: capture && roles.author.key === "opencode" ? [] : [...(roles.author.launchArgs ?? []), ...(planning === "required" && roles.author.key === "opencode" ? ["--agent", "tars-plan", ...(planModel ? ["--model", planModel] : [])] : modelArgs(authorModel))],
+      extraArgs: capture && roles.author.key === "opencode" ? [] : [...(roles.author.launchArgs ?? []), ...authorLaunchArgs],
       command: captureLaunchCommand(roles.author, capture?.roles.author),
       requireNew: true,
       start: false,
@@ -97,6 +98,9 @@ export async function startLane({ aoe, state, repoPath, issue, branch, worktreeN
     worktreePath = author.path
     const group = groupForWorktree(worktreePath)
     await provision?.(worktreePath)
+    if (codexPlanningModel && authorModel === undefined) {
+      authorModel = await resolveCodexDefaultModel({ cwd: worktreePath, harness: roles.author })
+    }
     await validateModels([
       { harness: roles.author, model: authorModel, role: "author" },
       { harness: roles.reviewer, model: reviewerModel, role: "reviewer" },

@@ -5,13 +5,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import test from "node:test"
-import { assertLaneModels, readCodexCatalog, readOpenCodeCatalog } from "../lib/models.mjs"
+import { assertLaneModels, readCodexCatalog, readCodexDefaultModel, readOpenCodeCatalog } from "../lib/models.mjs"
 
 const exec = promisify(execFile)
 const entry = (role, model, key = "codex") => ({ role, model, harness: { key } })
 
 test("rejects provider-prefixed Codex IDs for either role before reading a catalog", async () => {
-  for (const role of ["author", "reviewer"]) {
+  for (const role of ["author", "reviewer", "planning"]) {
     await assert.rejects(assertLaneModels([entry(role, "openai/gpt-6-luna")], {
       readCatalog: () => assert.fail("syntax must be validated first"),
     }), new RegExp(`${role} model.*Codex expects the bare model ID; use 'gpt-6-luna'`))
@@ -37,7 +37,7 @@ test("validates syntax without imposing a model allowlist on other providers", a
   await assert.rejects(assertLaneModels([entry("author", "gpt-6-luna")], { readCatalog: async () => { throw new Error("unavailable") } }), /unavailable/)
 })
 
-async function fixture(t, { account = "chatgpt", provider = "openai", mode = "normal" } = {}) {
+async function fixture(t, { account = "chatgpt", provider = "openai", mode = "normal", configuredModel = null } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "tars-models-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const command = join(directory, "codex"), log = join(directory, "calls.jsonl")
@@ -53,9 +53,9 @@ rl.on("line", line => {
   if (${JSON.stringify(mode)} === "error") { console.log(JSON.stringify({id:m.id,error:{message:"catalog unavailable"}})); return; }
   let result;
   if (m.method === "initialize") result = {};
-  else if (m.method === "config/read") result = {config:{model_provider:${JSON.stringify(provider)}}};
+  else if (m.method === "config/read") result = {config:{model_provider:${JSON.stringify(provider)},model:${JSON.stringify(configuredModel)}}};
   else if (m.method === "account/read") result = {account:{type:${JSON.stringify(account)}}};
-  else if (m.method === "model/list") result = ${JSON.stringify(mode)} === "invalid" ? {data:[{}]} : {data:[{id:"picker-id",model:m.params.cursor ? "gpt-6.1-sol" : "gpt-6-luna",hidden:true}],nextCursor:m.params.cursor ? null : "page2"};
+  else if (m.method === "model/list") result = ${JSON.stringify(mode)} === "invalid" ? {data:[{}]} : {data:[{id:"picker-id",model:m.params.cursor ? "gpt-6.1-sol" : "gpt-6-luna",hidden:true,isDefault:Boolean(m.params.cursor)}],nextCursor:m.params.cursor ? null : "page2"};
   else throw Error("Unexpected RPC " + m.method);
   console.log(JSON.stringify({id:m.id,result}));
 });
@@ -82,6 +82,14 @@ test("API-key and custom-provider accounts do not use the ChatGPT catalog as an 
   }
 })
 
+test("uses the effective Codex model setting before the catalog default", async (t) => {
+  const configured = await fixture(t, { configuredModel: "gpt-6-luna" })
+  assert.equal(await readCodexDefaultModel({ command: configured.command, cwd: configured.directory }), "gpt-6-luna")
+  assert.doesNotMatch(await readFile(configured.log, "utf8"), /model\/list/)
+  const unconfigured = await fixture(t)
+  assert.equal(await readCodexDefaultModel({ command: unconfigured.command, cwd: unconfigured.directory }), "gpt-6.1-sol")
+})
+
 test("catalog errors, malformed responses, early exit, missing executable and timeout fail closed", async (t) => {
   for (const mode of ["error", "invalid", "exit", "hang"]) {
     const f = await fixture(t, { mode })
@@ -97,7 +105,8 @@ test("lane start rejects invalid CLI and configured models before issue lookup o
   for (const role of ["author", "reviewer"]) {
     for (const configured of [false, true]) {
       await writeFile(config, JSON.stringify({ harnesses: { codex: { defaults: configured ? { [role]: { model: "openai/gpt-6-luna" } } : {} } } }))
-      await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "codex", "--reviewer", "codex", "--planning", "always", "--config", config, "--state", join(f.directory, "state.sqlite"), ...(configured ? [] : [`--${role}-model`, "openai/gpt-6-luna"])], { env: { ...process.env, PATH: f.directory } }), (error) => {
+      const flag = role === "planning" ? "--plan-model" : `--${role}-model`
+      await assert.rejects(exec(process.execPath, [cli, "lane", "start", "--repo", f.directory, "--issue", "100", "--author", "codex", "--reviewer", "codex", "--planning", "always", "--config", config, "--state", join(f.directory, "state.sqlite"), ...(configured ? [] : [flag, "openai/gpt-6-luna"])], { env: { ...process.env, PATH: f.directory } }), (error) => {
         assert.match(error.stderr, new RegExp(`${role} model.*Codex expects the bare model ID`))
         assert.doesNotMatch(error.stderr, /lane preflight:|started:/)
         return true

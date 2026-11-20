@@ -203,10 +203,11 @@ async function launch({ values, state }) {
   const roles = rolesFor(values, config)
   const investigationCapture = resolveInvestigation(values.investigate)
   if (investigationCapture) assertCaptureSupported(roles)
-  if (values["plan-model"] && roles.author.key !== "opencode") throw new Error("--plan-model is supported only when the author harness is OpenCode.")
+  const supportsPlanModel = ["codex", "opencode"].includes(roles.author.key)
+  if (values["plan-model"] !== undefined && !supportsPlanModel) throw new Error("--plan-model is supported only when the author harness is OpenCode or Codex.")
   const authorModel = resolveHarnessModel(config, roles.author.key, "author", values["author-model"])
   const reviewerModel = resolveHarnessModel(config, roles.reviewer.key, "reviewer", values["reviewer-model"])
-  const configuredPlanModel = values["plan-model"] ?? (roles.author.key === "opencode" && values.planning !== "never" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
+  const configuredPlanModel = values["plan-model"] ?? (supportsPlanModel && values.planning !== "never" ? resolveHarnessModel(config, roles.author.key, "planning") : undefined)
   const classifierModel = resolveHarnessModel(config, roles.author.key, "classifier", values["classifier-model"])
     ?? authorModel
   await assertLaneModels([
@@ -228,7 +229,7 @@ async function launch({ values, state }) {
       const planning = resolvePlanning(values.planning, preflight.planning)
       const planningSource = explicitPlanning ? "override" : planningReason ? "fallback" : "classifier"
       console.error(`lane preflight: source=${planningSource} planning=${planning}${planningReason ? ` reason=${planningReason}` : ""}`)
-      const planModel = values["plan-model"] ?? (planning === "required" ? configuredPlanModel : undefined)
+      const planModel = planning === "required" ? configuredPlanModel : roles.author.key === "opencode" ? values["plan-model"] : undefined
       const names = values.branch
         ? { branch: values.branch, worktreeName: values["worktree-name"] ?? fallback.worktreeName }
         : preflight
@@ -492,7 +493,7 @@ function printUsage() {
   tars handoff validate --path <handoff-file>
   tars handoff publish --file <draft-path> [--worktree <path>]
   tars lane register --worktree <path> [--author <harness> --reviewer <harness>] [--author-session <id> --reviewer-session <id> | --create-sessions]
-  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--classifier-model <model>] [--planning auto|always|never] [--plan-model <provider/model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
+  tars lane start --repo <path> --issue <number> [--author <harness> --reviewer <harness>] [--author-model <model> --reviewer-model <model>] [--classifier-model <model>] [--planning auto|always|never] [--plan-model <model>] [--investigate capture] [--branch <name>] [--worktree-name <name>] [--prompt <text>]
   tars lane close (--worktree <path> | --issue <number>) [--force]
   tars lane set-max-rounds (--worktree <path> | --issue <number>) [--max-rounds <number> | --review-budget <number>] (at least one required) [--resume]
   tars lane recover --worktree <path> --role author|reviewer
@@ -513,7 +514,7 @@ Model names for --author-model and --reviewer-model use the selected harness's s
   Codex:    bare model ID, e.g. --author codex --author-model gpt-6-luna
   OpenCode: provider/model, e.g. --author opencode --author-model openai/gpt-6-luna
   Other harnesses: use their native model names.
-  --plan-model is OpenCode-only and uses provider/model.
+  --plan-model takes a bare model ID for Codex or provider/model for OpenCode.
   --classifier-model selects the isolated classifier model using the author harness syntax.
   Classifier model precedence: --classifier-model, configured classifier model,
   resolved author model, then the harness default. OpenCode validates this selection

@@ -154,9 +154,9 @@ export class ReviewLoopCoordinator {
       if (!ACTIVE_STATES.has(String(states.get(sessionId)).toLowerCase())) continue
       if (event.destination === "author" && event.reviewKind === "plan" && event.outcome === "approved") {
         if (lane.authorHarness !== "opencode") {
-          const dispatchId = await this.sendPrompt(lane, sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
-          this.state.markDispatched(lane.worktreePath, event.key, { dispatchId, destinationRole: "author" })
-          this.state.saveLane({ ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, reviewBudget: reviewBudgetFor(event.handoff.metadata) })
+          const building = { ...lane, state: "implementing", phase: "building", planVerdictPath: event.handoff.path, planVerdictId: event.handoff.metadata.id, iterationCount: iterationCountFor(event.handoff.metadata), currentIteration: 1, reviewBudget: reviewBudgetFor(event.handoff.metadata) }
+          const dispatchId = await this.sendAuthorPrompt(building, sessionId, iterationPrompt(lane, event.handoff.metadata.workflow_id, event.handoff.path, 1, event.round + 1))
+          this.state.dispatch(lane.worktreePath, event.key, building, { dispatchId, destinationRole: "author" })
           results.push({ event, action: "sent:author:build" })
           break
         }
@@ -259,12 +259,17 @@ export class ReviewLoopCoordinator {
     if (lane.authorHarness === "opencode" && lane.planning === "required" && ["building", "post_pr_feedback"].includes(lane.phase)) {
       await this.aoe.switchAgent(sessionId, "build")
     }
+    if (lane.authorHarness === "codex" && lane.planModel && lane.authorModel && lane.planModel !== lane.authorModel) {
+      const model = lane.phase === "planning" ? lane.planModel : lane.authorModel
+      await this.aoe.switchModel(sessionId, model)
+      return this.sendPrompt(lane, sessionId, prompt, { noRevive: true })
+    }
     return this.sendPrompt(lane, sessionId, prompt)
   }
 
-  async sendPrompt(lane, sessionId, prompt) {
+  async sendPrompt(lane, sessionId, prompt, options) {
     const delivery = lane.investigationCapture === "capture" ? markedDispatch(prompt) : { message: prompt, id: null }
-    await this.aoe.send(sessionId, delivery.message)
+    await this.aoe.send(sessionId, delivery.message, options)
     return delivery.id
   }
 }
